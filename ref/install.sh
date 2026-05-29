@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# Deterministic implementation of SEED.md ## Dependencies for seed-roborev.
-# Idempotent + fail-loud. Wires always-on roborev on this machine:
-#   1. assert the roborev binary is present (external dep — never auto-installed)
-#   2. install + start the roborev daemon as a USER-level service
-#      (systemd --user on Linux / launchd LaunchAgent on macOS — no sudo)
-#   3. set a global git post-commit hook (core.hooksPath) that enqueues a
-#      roborev review after every commit, chaining to any repo-local
-#      post-commit so a repo's own hook isn't silently dropped.
+# Deterministic implementation of SEED.md ## Dependencies for seed-roborev (v2).
+# Idempotent + fail-loud. Wires always-on roborev on this machine in the DRY-est
+# way the design admits — *roborev owns its own git hooks* (post-commit +
+# post-rewrite) in core.hooksPath, so this SEED does NOT duplicate them. It
+# only adds the missing pre-commit results-check, plus the bits roborev doesn't
+# set up by itself: the review agent (claude-code), the daemon as a managed
+# user-level service, and the global core.hooksPath value.
 set -euo pipefail
 
 HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
+SEED_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log()  { printf '==> %s\n' "$*"; }
 fail() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
 
-# --- 1. roborev binary (external dependency; surfaced, never auto-installed) --
+# --- 1. roborev binary (external dep; surfaced, never auto-installed) --------
 ROBOREV="$(command -v roborev || true)"
 [ -z "$ROBOREV" ] && [ -x "$HOME/.local/bin/roborev" ] && ROBOREV="$HOME/.local/bin/roborev"
 [ -n "$ROBOREV" ] || fail "roborev binary not found on PATH or ~/.local/bin — install roborev first (https://github.com/plow-pbc/roborev), then re-run."
 log "roborev: $ROBOREV"
 
-# --- 2. daemon as a managed user-level service -------------------------------
+# --- 2. review agent — claude-code (the working one; codex's OAuth was broken)
+# default_agent is a GLOBAL key in roborev's config — must pass --global.
+"$ROBOREV" config set --global default_agent claude-code
+log "default_agent=claude-code"
+
+# --- 3. daemon as a managed user-level service (idempotent on already-running)
 case "$(uname -s)" in
   Linux)
     unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -39,10 +44,8 @@ WantedBy=default.target
 UNIT
     systemctl --user daemon-reload
     systemctl --user enable roborev-daemon.service   # durable across reboots
-    # Idempotent on already-running: if a roborev daemon is already serving
-    # (e.g. a bare `roborev daemon run`), don't start a second instance that
-    # would collide on the server port — just move on. The enabled unit takes
-    # over on the next reboot/restart.
+    # If a roborev daemon is already serving (e.g. a bare `roborev daemon run`),
+    # don't start a second instance that would collide on the server port.
     if systemctl --user is-active --quiet roborev-daemon.service; then
       log "roborev-daemon.service already active"
     elif "$ROBOREV" list >/dev/null 2>&1; then
@@ -51,8 +54,7 @@ UNIT
       systemctl --user start roborev-daemon.service
       log "started roborev-daemon.service"
     fi
-    # Linger lets the user service survive logout (matters on headless/SSH
-    # boxes). enable-linger needs polkit/root — SURFACE it, don't auto-sudo.
+    # enable-linger needs polkit/root — surfaced, not auto-sudo'd.
     if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes'; then
       log "NOTE (run yourself on a headless box so the daemon survives logout): sudo loginctl enable-linger $USER"
     fi
@@ -72,9 +74,6 @@ UNIT
 </dict>
 </plist>
 PLIST
-    # Idempotent on already-running: if a roborev daemon is already serving,
-    # don't bootstrap a colliding LaunchAgent — leave the running one. Otherwise
-    # (re)load the agent so it starts now and on every login.
     if "$ROBOREV" list >/dev/null 2>&1; then
       log "a roborev daemon is already running — LaunchAgent written for boot durability, not force-(re)loaded"
     else
@@ -86,32 +85,31 @@ PLIST
   *) fail "unsupported OS: $(uname -s) — Linux + macOS only" ;;
 esac
 
-# --- 3. global post-commit + pre-commit hooks (every repo, every commit) -----
+# --- 4. global core.hooksPath ------------------------------------------------
 mkdir -p "$HOOKS_DIR"
-cat > "$HOOKS_DIR/post-commit" <<'HOOK'
-#!/usr/bin/env bash
-# Global post-commit (git core.hooksPath): enqueue a roborev review after every
-# commit, then chain to the repo's own post-commit if it has one — core.hooksPath
-# replaces .git/hooks wholesale, so a repo-local hook must be called explicitly.
-roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
-[ -x "$roborev" ] && "$roborev" post-commit >/dev/null 2>&1 || true
-# Find the repo-LOCAL hook via --git-dir (literal .git/hooks), NOT
-# `--git-path hooks/...` — the latter resolves through core.hooksPath and would
-# just return this global hook, so the chain would never fire.
-git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
-repo_hook="${git_dir:+$git_dir/hooks/post-commit}"
-if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "${BASH_SOURCE[0]}" ]; then
-  exec "$repo_hook" "$@"
+current="$(git config --global core.hooksPath || true)"
+if [ -z "$current" ]; then
+  git config --global core.hooksPath "$HOOKS_DIR"
+  log "set global core.hooksPath=$HOOKS_DIR"
+elif [ "$current" = "$HOOKS_DIR" ]; then
+  log "global core.hooksPath already=$HOOKS_DIR (idempotent)"
+else
+  fail "global core.hooksPath is already set to '$current' (not ours) — refusing to clobber. Either move roborev's hooks into '$current', or unset core.hooksPath and re-run."
 fi
-HOOK
-chmod +x "$HOOKS_DIR/post-commit"
 
-# pre-commit: surface OPEN roborev findings before the next commit, so whichever
-# agent (claude/codex) or human is about to commit sees them first. Warn-only
-# (never blocks) — the hook's stderr lands in the `git commit` tool output the
-# agent reads. Agent-agnostic on purpose: codex has no Claude-style PreToolUse
-# hook, so a git-level pre-commit is the only check that covers it too. Chains
-# to any repo-local pre-commit.
+# --- 5. delegate post-commit + post-rewrite to roborev (DRY: one source) -----
+# roborev's install-hook is core.hooksPath-aware when run inside any git repo:
+# with core.hooksPath set globally above, it writes the hooks to that dir, not
+# to .git/hooks/. --force makes the upgrade-from-v1 case clean (overwrites any
+# prior content, no merging). Run it from the SEED clone — any git repo works.
+( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
+log "roborev install-hook: post-commit + post-rewrite owned by roborev"
+
+# --- 6. pre-commit results-check (the only hook roborev doesn't provide) -----
+# Warn-only (never blocks); chains to any repo-local pre-commit. Agent-agnostic
+# (codex has no Claude-style pre-tool hook, so a git-level hook is the only
+# check that reaches it too) — stderr lands in the `git commit` tool output
+# whichever agent (claude/codex/human) ran the commit sees.
 cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
@@ -133,15 +131,6 @@ fi
 exit 0
 HOOK
 chmod +x "$HOOKS_DIR/pre-commit"
-
-current="$(git config --global core.hooksPath || true)"
-if [ -z "$current" ]; then
-  git config --global core.hooksPath "$HOOKS_DIR"
-  log "set global core.hooksPath=$HOOKS_DIR"
-elif [ "$current" = "$HOOKS_DIR" ]; then
-  log "global core.hooksPath already=$HOOKS_DIR (idempotent)"
-else
-  fail "global core.hooksPath is already set to '$current' (not ours) — refusing to clobber. Either move roborev's post-commit ($HOOKS_DIR/post-commit) into '$current', or unset core.hooksPath and re-run."
-fi
+log "wrote pre-commit (results-check; roborev provides no pre-commit of its own)"
 
 log "seed-roborev install complete — run ref/verify.sh to confirm."
