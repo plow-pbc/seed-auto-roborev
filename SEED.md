@@ -28,13 +28,15 @@ bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/install.sh"
 
 - The local review queue processor: `roborev daemon run`, listening on `roborev config get server_addr` (default `127.0.0.1:7373`). Installed as `roborev-daemon.service` (systemd `--user`, Linux) or `co.plow.roborev-daemon` (launchd LaunchAgent, macOS) so it survives reboot. Reads/writes `~/.roborev/reviews.db`.
 
-### Global post-commit hook ^obj-hook
+### Global git hooks ^obj-hook
 
-- `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks/post-commit`, referenced machine-wide via `git config --global core.hooksPath`. On every commit in every repo it enqueues a roborev review, then `exec`s the repo-local `.git/hooks/post-commit` if one exists (so a repo's own hook is preserved despite `core.hooksPath` replacing `.git/hooks`).
+- `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks/`, referenced machine-wide via `git config --global core.hooksPath`. Two hooks, each chaining to the repo-local hook of the same name if one exists (so a repo's own hooks are preserved despite `core.hooksPath` replacing `.git/hooks` wholesale):
+  - **`post-commit`** — enqueues a roborev review of the just-made commit to `^obj-daemon`. (The *after-every-commit* half.)
+  - **`pre-commit`** — surfaces any OPEN roborev findings for this repo+branch to stderr (warn-only, never blocks). Because the hook's stderr lands in the `git commit` tool output, **whichever agent ran the commit (claude OR codex) sees the findings** — this is the *before-the-next-commit* check, agent-agnostic by design (codex has no Claude-style pre-tool hook, so a git-level hook is the only check that covers it). (The *before-every-commit* half.)
 
-### Pre-commit review surfacing (companion, not owned here) ^obj-precommit
+### Claude-specific pre-commit enhancement ^obj-precommit
 
-- The "show open roborev findings *before* the next commit" half lives in [claude-config](https://github.com/srosro/claude-config) as the `roborev-pre-commit-context.py` Claude Code `PreToolUse[Bash]` hook. This SEED owns only the after-every-commit enqueue; the two compose into the full loop.
+- For Claude Code specifically, [claude-config](https://github.com/srosro/claude-config)'s `roborev-pre-commit-context.py` `PreToolUse[Bash]` hook surfaces the same findings *earlier* (before the `git commit` tool call runs, with richer context injection). It is a complement to `^obj-hook`'s universal `pre-commit`, not a replacement — codex and humans rely on the git-level hook.
 
 ## Actions
 
@@ -47,7 +49,11 @@ bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/install.sh"
 
 ### A commit is reviewed ^act-review
 
-- After any `git commit` in any repo on the machine, `^obj-hook` enqueues a review to `^obj-daemon`, which reviews the commit asynchronously and records a verdict in `~/.roborev/reviews.db` (`roborev list` / `roborev show`).
+- After any `git commit` in any repo on the machine, `^obj-hook`'s `post-commit` enqueues a review to `^obj-daemon`, which reviews the commit asynchronously and records a verdict in `~/.roborev/reviews.db` (`roborev list` / `roborev show`).
+
+### Open findings are surfaced before the next commit ^act-check
+
+- Before any `git commit`, `^obj-hook`'s `pre-commit` lists OPEN roborev reviews for the current repo+branch and prints them to stderr (non-blocking). The committing agent (claude/codex) or human sees them in the commit output and decides whether to address them before adding more commits — this is the cheap local gate that keeps a PR clean *before* it reaches an expensive knightwatch review.
 
 ## Verify
 
@@ -60,10 +66,11 @@ bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/verify.sh"
 - **^v-binary** — `roborev` resolves on `PATH` or at `~/.local/bin/roborev`.
 - **^v-daemon** — `roborev list` round-trips through the daemon (it is running + reachable).
 - **^v-hookspath** — `git config --global core.hooksPath` equals `^obj-hook`'s directory, and its `post-commit` is executable.
+- **^v-precommit** — `^obj-hook`'s `pre-commit` is executable.
 - **^v-enqueue** — in a fresh throwaway git repo, a single commit causes a roborev job to appear for that repo (the global hook fires for an arbitrary repo). The throwaway repo is removed before exit.
 
 Any failed check MUST exit nonzero with a `FAIL ^v-…: <reason>` line — no silent partial success.
 
 ## Open
 
-- **`core.hooksPath` replaces `.git/hooks` wholesale, not just `post-commit`.** `^obj-hook` chains the repo-local `post-commit`, but a repo relying on *other* local hook types (`pre-commit`, `post-checkout`, …) will have those bypassed while `core.hooksPath` is set. At the current operating point no target repo depends on non-`post-commit` local hooks; if one does, mirror that hook into the global hooks dir. A future revision MAY make the global dir a full per-type pass-through.
+- **`core.hooksPath` replaces `.git/hooks` wholesale.** `^obj-hook` chains the repo-local `post-commit` and `pre-commit`, but a repo relying on *other* local hook types (`post-checkout`, `pre-push`, `commit-msg`, …) will have those bypassed while `core.hooksPath` is set. At the current operating point no target repo depends on those other local hooks; if one does, mirror it into the global hooks dir. A future revision MAY make the global dir a full per-type pass-through.

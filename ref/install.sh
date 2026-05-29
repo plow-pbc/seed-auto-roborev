@@ -38,8 +38,19 @@ RestartSec=5
 WantedBy=default.target
 UNIT
     systemctl --user daemon-reload
-    systemctl --user enable --now roborev-daemon.service
-    log "systemd --user roborev-daemon.service enabled + started"
+    systemctl --user enable roborev-daemon.service   # durable across reboots
+    # Idempotent on already-running: if a roborev daemon is already serving
+    # (e.g. a bare `roborev daemon run`), don't start a second instance that
+    # would collide on the server port — just move on. The enabled unit takes
+    # over on the next reboot/restart.
+    if systemctl --user is-active --quiet roborev-daemon.service; then
+      log "roborev-daemon.service already active"
+    elif "$ROBOREV" list >/dev/null 2>&1; then
+      log "a roborev daemon is already running (not via this service) — leaving it; the enabled unit manages it after next reboot. To switch now: pkill -f 'roborev daemon run' && systemctl --user start roborev-daemon.service"
+    else
+      systemctl --user start roborev-daemon.service
+      log "started roborev-daemon.service"
+    fi
     # Linger lets the user service survive logout (matters on headless/SSH
     # boxes). enable-linger needs polkit/root — SURFACE it, don't auto-sudo.
     if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes'; then
@@ -61,14 +72,21 @@ UNIT
 </dict>
 </plist>
 PLIST
-    launchctl bootout "gui/$(id -u)/co.plow.roborev-daemon" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$plist"
-    log "launchd co.plow.roborev-daemon loaded"
+    # Idempotent on already-running: if a roborev daemon is already serving,
+    # don't bootstrap a colliding LaunchAgent — leave the running one. Otherwise
+    # (re)load the agent so it starts now and on every login.
+    if "$ROBOREV" list >/dev/null 2>&1; then
+      log "a roborev daemon is already running — LaunchAgent written for boot durability, not force-(re)loaded"
+    else
+      launchctl bootout "gui/$(id -u)/co.plow.roborev-daemon" 2>/dev/null || true
+      launchctl bootstrap "gui/$(id -u)" "$plist"
+      log "launchd co.plow.roborev-daemon loaded"
+    fi
     ;;
   *) fail "unsupported OS: $(uname -s) — Linux + macOS only" ;;
 esac
 
-# --- 3. global post-commit hook (every repo, every commit) -------------------
+# --- 3. global post-commit + pre-commit hooks (every repo, every commit) -----
 mkdir -p "$HOOKS_DIR"
 cat > "$HOOKS_DIR/post-commit" <<'HOOK'
 #!/usr/bin/env bash
@@ -87,6 +105,34 @@ if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "${BASH_SO
 fi
 HOOK
 chmod +x "$HOOKS_DIR/post-commit"
+
+# pre-commit: surface OPEN roborev findings before the next commit, so whichever
+# agent (claude/codex) or human is about to commit sees them first. Warn-only
+# (never blocks) — the hook's stderr lands in the `git commit` tool output the
+# agent reads. Agent-agnostic on purpose: codex has no Claude-style PreToolUse
+# hook, so a git-level pre-commit is the only check that covers it too. Chains
+# to any repo-local pre-commit.
+cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
+if [ -x "$roborev" ]; then
+  n="$("$roborev" list --open --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
+  if [ "${n:-0}" -gt 0 ]; then
+    {
+      echo "roborev: ${n} open review finding(s) on this branch — review before committing more:"
+      "$roborev" list --open 2>/dev/null | head -20
+      echo "(roborev show <id> for details; this is a non-blocking warning)"
+    } >&2
+  fi
+fi
+git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+repo_hook="${git_dir:+$git_dir/hooks/pre-commit}"
+if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "${BASH_SOURCE[0]}" ]; then
+  exec "$repo_hook" "$@"
+fi
+exit 0
+HOOK
+chmod +x "$HOOKS_DIR/pre-commit"
 
 current="$(git config --global core.hooksPath || true)"
 if [ -z "$current" ]; then

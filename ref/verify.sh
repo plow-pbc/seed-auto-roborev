@@ -27,6 +27,7 @@ fi
 hp="$(git config --global core.hooksPath || true)"
 [ "$hp" = "$HOOKS_DIR" ] && ok "^v-hookspath: core.hooksPath=$HOOKS_DIR" || bad "^v-hookspath: core.hooksPath='$hp' (expected $HOOKS_DIR)"
 [ -x "$HOOKS_DIR/post-commit" ] && ok "^v-hook-exec: post-commit executable" || bad "^v-hook-exec: $HOOKS_DIR/post-commit missing or not executable"
+[ -x "$HOOKS_DIR/pre-commit" ]  && ok "^v-precommit: pre-commit executable"  || bad "^v-precommit: $HOOKS_DIR/pre-commit missing or not executable"
 
 # ^v-enqueue — an ephemeral repo + commit actually enqueues a roborev job
 # (proves the global post-commit fires for an arbitrary repo). Cleaned up.
