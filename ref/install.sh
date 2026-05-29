@@ -13,10 +13,24 @@ SEED_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log()  { printf '==> %s\n' "$*"; }
 fail() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
 
-# --- 1. roborev binary (external dep; surfaced, never auto-installed) --------
+# --- 1a. claude code CLI — auto-install via Anthropic's canonical user-scope
+# installer if missing. (User-scope into $HOME/.local/share/claude, no sudo, no
+# package manager — fits the SEED convention's "no auto system-wide installs".)
+if ! command -v claude >/dev/null && [ ! -x "$HOME/.local/bin/claude" ]; then
+  log "claude CLI missing — installing via https://claude.ai/install.sh"
+  curl -fsSL https://claude.ai/install.sh | bash || fail "claude install failed"
+fi
+[ -x "$HOME/.local/bin/claude" ] || command -v claude >/dev/null || fail "claude CLI still missing post-install"
+
+# --- 1b. roborev binary -------------------------------------------------------
+# Surfaced (not auto-installed): roborev's distribution channel isn't a stable
+# public URL the SEED can curl. If you have a canonical install command, run it
+# first; otherwise copy the binary from another fleet machine of the same arch
+# (e.g. `scp <fleet-mac>:~/.local/bin/roborev ~/.local/bin/roborev` for macOS
+# arm64). The check below fails loud with that guidance if it's missing.
 ROBOREV="$(command -v roborev || true)"
 [ -z "$ROBOREV" ] && [ -x "$HOME/.local/bin/roborev" ] && ROBOREV="$HOME/.local/bin/roborev"
-[ -n "$ROBOREV" ] || fail "roborev binary not found on PATH or ~/.local/bin — install roborev first (https://github.com/plow-pbc/roborev), then re-run."
+[ -n "$ROBOREV" ] || fail "roborev binary not found on PATH or ~/.local/bin — install it first (private; ask Sam for the install command, or scp it from another fleet machine of matching arch into ~/.local/bin/roborev), then re-run."
 log "roborev: $ROBOREV"
 
 # --- 2. review agent — claude-code (the working one; codex's OAuth was broken)
@@ -44,16 +58,15 @@ WantedBy=default.target
 UNIT
     systemctl --user daemon-reload
     systemctl --user enable roborev-daemon.service   # durable across reboots
-    # If a roborev daemon is already serving (e.g. a bare `roborev daemon run`),
-    # don't start a second instance that would collide on the server port.
-    if systemctl --user is-active --quiet roborev-daemon.service; then
-      log "roborev-daemon.service already active"
-    elif "$ROBOREV" list >/dev/null 2>&1; then
-      log "a roborev daemon is already running (not via this service) — leaving it; the enabled unit manages it after next reboot. To switch now: pkill -f 'roborev daemon run' && systemctl --user start roborev-daemon.service"
-    else
-      systemctl --user start roborev-daemon.service
-      log "started roborev-daemon.service"
-    fi
+    # Always (re)start through our service so the daemon picks up the agent
+    # we just set + any other config changes. A previously-running bare
+    # `roborev daemon run` (or a stale daemon from a prior binary version)
+    # would otherwise enqueue with stale defaults — restart is the robust fix.
+    systemctl --user stop roborev-daemon.service 2>/dev/null || true
+    pkill -f "roborev daemon run" 2>/dev/null || true
+    sleep 1
+    systemctl --user start roborev-daemon.service
+    log "(re)started roborev-daemon.service with current config"
     # enable-linger needs polkit/root — surfaced, not auto-sudo'd.
     if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes'; then
       log "NOTE (run yourself on a headless box so the daemon survives logout): sudo loginctl enable-linger $USER"
@@ -74,13 +87,13 @@ UNIT
 </dict>
 </plist>
 PLIST
-    if "$ROBOREV" list >/dev/null 2>&1; then
-      log "a roborev daemon is already running — LaunchAgent written for boot durability, not force-(re)loaded"
-    else
-      launchctl bootout "gui/$(id -u)/co.plow.roborev-daemon" 2>/dev/null || true
-      launchctl bootstrap "gui/$(id -u)" "$plist"
-      log "launchd co.plow.roborev-daemon loaded"
-    fi
+    # Always reload through launchd + kill any stale bare/prior-version daemon
+    # so the (re)load picks up the agent we just set. Same rationale as Linux.
+    launchctl bootout "gui/$(id -u)/co.plow.roborev-daemon" 2>/dev/null || true
+    pkill -f "roborev daemon run" 2>/dev/null || true
+    sleep 1
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+    log "launchd co.plow.roborev-daemon (re)loaded with current config"
     ;;
   *) fail "unsupported OS: $(uname -s) — Linux + macOS only" ;;
 esac
