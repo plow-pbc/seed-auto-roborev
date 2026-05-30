@@ -140,19 +140,40 @@ else
   fail "global core.hooksPath is already set to '$current' (not ours) — refusing to clobber. Either move roborev's hooks into '$current', or unset core.hooksPath and re-run."
 fi
 
-# --- 5. delegate post-commit + post-rewrite to roborev (DRY: one source) -----
-# roborev's install-hook is core.hooksPath-aware when run inside any git repo:
-# with core.hooksPath set globally above, it writes the hooks to that dir, not
-# to .git/hooks/. --force makes the upgrade-from-v1 case clean (overwrites any
-# prior content, no merging). Run it from the SEED clone — any git repo works.
+# --- 5. install hooks ---------------------------------------------------------
+# Order matters: call roborev's install-hook first to seed post-rewrite (which
+# roborev owns), then OVERWRITE post-commit + pre-commit with our versions that
+# *always print a one-line confirmation* (Option A + Option B). Reason: silent
+# success defeats observability — without the always-on lines, the operator
+# can't tell "roborev is running" from "roborev is broken" until something fails.
 ( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
-log "roborev install-hook: post-commit + post-rewrite owned by roborev"
 
-# --- 6. pre-commit results-check (the only hook roborev doesn't provide) -----
-# Warn-only (never blocks); chains to any repo-local pre-commit. Agent-agnostic
-# (codex has no Claude-style pre-tool hook, so a git-level hook is the only
-# check that reaches it too) — stderr lands in the `git commit` tool output
-# whichever agent (claude/codex/human) ran the commit sees.
+# Option A — post-commit: enqueue + print a confirmation line every commit, then
+# chain to any repo-local post-commit. Replaces roborev's silent stock hook.
+cat > "$HOOKS_DIR/post-commit" <<'HOOK'
+#!/usr/bin/env bash
+roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
+if [ -x "$roborev" ]; then
+  sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
+  if "$roborev" post-commit >/dev/null 2>&1; then
+    agent=$("$roborev" config get default_agent 2>/dev/null | head -1)
+    echo "roborev: enqueued review for $sha (${agent:-?})" >&2
+  else
+    echo "roborev: post-commit FAILED — review NOT enqueued for $sha" >&2
+  fi
+fi
+git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+repo_hook="${git_dir:+$git_dir/hooks/post-commit}"
+if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "${BASH_SOURCE[0]}" ]; then
+  exec "$repo_hook" "$@"
+fi
+exit 0
+HOOK
+chmod +x "$HOOKS_DIR/post-commit"
+
+# Option B — pre-commit: always print a one-line summary of open findings on
+# THIS repo+branch (not just on findings>0), so the operator sees roborev is
+# checking on every commit. Warn-only, never blocks. Chains to repo-local hook.
 cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
@@ -164,6 +185,8 @@ if [ -x "$roborev" ]; then
       "$roborev" list --open 2>/dev/null | head -20
       echo "(roborev show <id> for details; this is a non-blocking warning)"
     } >&2
+  else
+    echo "roborev: 0 open findings on this branch ✓" >&2
   fi
 fi
 git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
@@ -174,6 +197,6 @@ fi
 exit 0
 HOOK
 chmod +x "$HOOKS_DIR/pre-commit"
-log "wrote pre-commit (results-check; roborev provides no pre-commit of its own)"
+log "wrote post-commit + pre-commit (always-on confirmation lines); post-rewrite owned by roborev"
 
 log "seed-roborev install complete — run ref/verify.sh to confirm."

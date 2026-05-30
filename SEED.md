@@ -34,9 +34,10 @@ bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/install.sh"
 
 ### Hook ownership split ^obj-hook
 
-- All hooks live under `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks/`, addressed machine-wide via `git config --global core.hooksPath`. Ownership is split for DRYness — roborev already self-manages its own hooks in `core.hooksPath`, so this SEED does NOT duplicate them:
-  - **`post-commit` + `post-rewrite`** — installed by **`roborev install-hook --force`** as part of `^act-install`. Owned and versioned by roborev (its "v4" block). Enqueues a review of the just-made commit (or rewritten history) to `^obj-daemon`. The SEED never writes these.
-  - **`pre-commit`** — **owned by this SEED** (roborev provides none). Lists OPEN roborev reviews for the current repo+branch to stderr (warn-only, never blocks) so whichever agent (claude/codex) or human ran the commit sees the findings in the commit output and decides whether to address them before adding more commits. Chains to any repo-local `pre-commit`.
+- All hooks live under `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks/`, addressed machine-wide via `git config --global core.hooksPath`. Ownership:
+  - **`post-rewrite`** — installed by **`roborev install-hook --force`** at `^act-install` time. Owned by roborev. Enqueues a review when history is rewritten (rebase/amend).
+  - **`post-commit`** — **owned by this SEED.** A thin wrapper that calls `roborev post-commit` to enqueue the review AND prints a one-line stderr confirmation on every commit (`roborev: enqueued review for <sha> (claude-code)` or `roborev: post-commit FAILED — review NOT enqueued`). The always-on print is intentional — silent success defeats observability; the operator must see proof the hook fired. Chains to any repo-local `post-commit`.
+  - **`pre-commit`** — **owned by this SEED.** Lists OPEN roborev reviews for the current repo+branch and **always** prints a one-line stderr summary: `roborev: N open review finding(s) on this branch — review before committing more: …` when findings exist, or `roborev: 0 open findings on this branch ✓` when clean. Warn-only, never blocks. Same observability rationale as post-commit. Chains to any repo-local `pre-commit`.
 
 ### Claude-specific pre-commit enhancement ^obj-precommit
 
@@ -72,11 +73,22 @@ Read-only on installed state, EXCEPT one ephemeral throwaway repo + a single com
 bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/verify.sh"
 ```
 
+Static checks:
+
 - **^v-binary** — `roborev` resolves on `PATH` or at `~/.local/bin/roborev`.
 - **^v-daemon** — `roborev list` round-trips through the daemon.
 - **^v-agent** — `roborev config get default_agent` equals `claude-code`.
-- **^v-hookspath** — `git config --global core.hooksPath` equals the SEED's hooks dir, with both `post-commit` (roborev's) and `pre-commit` (SEED's) executable.
-- **^v-review** — in a fresh throwaway git repo, a single commit enqueues a roborev job whose **agent is `claude-code`** and that **reaches a terminal status** (`done`/`passed`/`failed`) within the verify's wait window. Proves the full after-every-commit loop, not just enqueue.
+- **^v-hookspath** — `git config --global core.hooksPath` equals the SEED's hooks dir, with both `post-commit` and `pre-commit` (both SEED-owned) executable.
+
+End-to-end loop check (`^v-loop`) — in one ephemeral throwaway repo it commits a deliberately-broken `app.py` (hardcoded API-key-shaped credential + OS-command-injection via `os.system(input())` + `TypeError` on the happy path) and then a second commit, asserting:
+
+- **^v-loop[option-b-clean]** — the FIRST commit's pre-commit prints `roborev: 0 open findings ✓` (clean-branch path of Option B).
+- **^v-loop[option-a]** — that commit's post-commit prints `roborev: enqueued review for <sha1> (claude-code)` (Option A).
+- **^v-loop[enqueued]** — a job for that repo exists in the roborev queue with `agent=claude-code`.
+- **^v-loop[complete]** — the job reaches a terminal `status` (`done`/`passed`/`failed`) within 240s.
+- **^v-loop[findings]** — `claude-code` flagged at least one open finding on the intentionally-broken code (proves the review is actually *finding* real bugs, not just running).
+- **^v-loop[blocking]** — the SECOND commit's pre-commit surfaces the open finding(s) (`roborev: N open review finding(s)` — Option B's findings path), proving the loop's headline promise: bad code committed → review flags it → next commit's pre-commit blocks-warns about it.
+- **^v-loop[option-a-second]** — that second commit's post-commit also prints its `enqueued review for <sha2>` line (no Option A regression).
 
 Any failed check MUST exit nonzero with a `FAIL ^v-…: <reason>` line — no silent partial success.
 
