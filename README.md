@@ -21,6 +21,17 @@ If your agent has the `seed-install` skill:
 
 The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies` install steps (announcing each shell block first), then answers the `## Verify` prompts. CI / non-AI callers can run the deterministic equivalents at [`ref/install.sh`](ref/install.sh) and [`ref/verify.sh`](ref/verify.sh).
 
+## Adding a platform
+
+`install.sh` fetches the `roborev` binary from this repo's **GitHub Releases** as `roborev-<os>-<arch>` (e.g. `roborev-linux-x86_64`, `roborev-darwin-arm64`). To add a new platform (e.g. Raspberry Pi `linux-aarch64`):
+
+```bash
+# build/obtain the binary for the platform, then:
+gh release upload v0.1 path/to/roborev#roborev-linux-aarch64 -R plow-pbc/seed-roborev
+```
+
+After upload, `install.sh` on that platform succeeds without manual prep. Until then it fails loud with the exact upload command.
+
 ## License
 
 MIT.

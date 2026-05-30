@@ -22,15 +22,33 @@ if ! command -v claude >/dev/null && [ ! -x "$HOME/.local/bin/claude" ]; then
 fi
 [ -x "$HOME/.local/bin/claude" ] || command -v claude >/dev/null || fail "claude CLI still missing post-install"
 
-# --- 1b. roborev binary -------------------------------------------------------
-# Surfaced (not auto-installed): roborev's distribution channel isn't a stable
-# public URL the SEED can curl. If you have a canonical install command, run it
-# first; otherwise copy the binary from another fleet machine of the same arch
-# (e.g. `scp <fleet-mac>:~/.local/bin/roborev ~/.local/bin/roborev` for macOS
-# arm64). The check below fails loud with that guidance if it's missing.
+# --- 1b. roborev binary — auto-fetch from this SEED's GitHub release ---------
+# Truly one-shot: install.sh downloads the platform-tagged binary from
+#   https://github.com/plow-pbc/seed-roborev/releases/latest/download/roborev-<os>-<arch>
+# To support a new platform: build roborev for it and upload the binary with
+# that asset name (see README "Adding a platform").
 ROBOREV="$(command -v roborev || true)"
 [ -z "$ROBOREV" ] && [ -x "$HOME/.local/bin/roborev" ] && ROBOREV="$HOME/.local/bin/roborev"
-[ -n "$ROBOREV" ] || fail "roborev binary not found on PATH or ~/.local/bin — install it first (private; ask Sam for the install command, or scp it from another fleet machine of matching arch into ~/.local/bin/roborev), then re-run."
+if [ -z "$ROBOREV" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64)   asset="roborev-linux-x86_64" ;;
+    Linux-aarch64)  asset="roborev-linux-aarch64" ;;
+    Darwin-arm64)   asset="roborev-darwin-arm64" ;;
+    Darwin-x86_64)  asset="roborev-darwin-x86_64" ;;
+    *) fail "unsupported OS/arch for auto-install: $(uname -s)-$(uname -m)" ;;
+  esac
+  url="https://github.com/plow-pbc/seed-roborev/releases/latest/download/$asset"
+  mkdir -p "$HOME/.local/bin"
+  log "fetching $asset from $url"
+  if curl -fsSL "$url" -o "$HOME/.local/bin/roborev.tmp"; then
+    chmod +x "$HOME/.local/bin/roborev.tmp"
+    mv "$HOME/.local/bin/roborev.tmp" "$HOME/.local/bin/roborev"
+    ROBOREV="$HOME/.local/bin/roborev"
+  else
+    rm -f "$HOME/.local/bin/roborev.tmp"
+    fail "could not fetch $asset (no binary published for $(uname -s)-$(uname -m) yet). To enable: build roborev for this platform and 'gh release upload v0.1 <path>#$asset -R plow-pbc/seed-roborev', then re-run."
+  fi
+fi
 log "roborev: $ROBOREV"
 
 # --- 2. review agent — claude-code (the working one; codex's OAuth was broken)
