@@ -25,7 +25,7 @@ The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies
 
 ## Adding a platform
 
-`install.sh` fetches the `roborev` binary from this repo's **GitHub Releases** as `roborev-<os>-<arch>` (e.g. `roborev-linux-x86_64`, `roborev-darwin-arm64`), pinned to a release tag (`ROBOREV_TAG` in `ref/install.sh`) and verified against a committed `sha256`. To add a new platform (e.g. Raspberry Pi `linux-aarch64`) or bump the version:
+`ref/install.sh` fetches the `roborev` binary from this repo's **GitHub Releases** as `roborev-<os>-<arch>` (e.g. `roborev-linux-x86_64`, `roborev-darwin-arm64`), pinned to a release tag (`ROBOREV_TAG` in `ref/install.sh`) and verified against a committed `sha256`. To add a new platform (e.g. Raspberry Pi `linux-aarch64`) or bump the version:
 
 ```bash
 # build/obtain the binary for the platform, then (<tag> must match
@@ -34,7 +34,7 @@ gh release upload <tag> path/to/roborev#roborev-linux-aarch64 -R plow-pbc/seed-r
 shasum -a 256 path/to/roborev   # or: sha256sum — copy the digest
 ```
 
-Then add (or update) that platform's `asset`/`sha` arm in `install.sh`'s `case` — and bump `ROBOREV_TAG` if it's a new release. The checksum lives in git so the binary is verified before it's ever run; an unverified or mismatched asset fails loud rather than installing. Until a platform is added, `install.sh` there fails loud with the exact upload command.
+Then add (or update) that platform's `asset`/`sha` arm in `ref/install.sh`'s `case` — and bump `ROBOREV_TAG` if it's a new release. The checksum lives in git so the binary is verified before it's ever run; an unverified or mismatched asset fails loud rather than installing. Until a platform is added, `ref/install.sh` fails loud with the exact upload command.
 
 ## License
 

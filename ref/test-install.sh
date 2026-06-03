@@ -69,7 +69,7 @@ root="$(make_sandbox "$GOOD_SHA")"
 run_install "$root"
 assert_eq "1" "$([ -x "$root/home/.local/bin/roborev" ] && echo 1 || echo 0)" "matching digest installs an executable binary"
 assert_eq "0" "$([ -e "$root/home/.local/bin/roborev.tmp" ] && echo 1 || echo 0)" "temp download cleaned up on success"
-assert_eq "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)" "installer dies at §2 — never reaches the un-sandboxed §3 daemon path"
+assert_eq "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)" "installer exits nonzero before completing — §3's host-touching daemon path never succeeds"
 rm -rf "$root"
 
 # --- Case 3: unsupported arch → fail-closed (no pinned checksum) ---------------
