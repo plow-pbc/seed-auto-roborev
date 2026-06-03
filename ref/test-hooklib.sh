@@ -56,6 +56,21 @@ chmod +x "$fs_clean"
 out=$( roborev_findings_summary "$fs_clean" 2>&1 )
 assert_contains "$out" "0 open findings on this branch ✓" "findings summary prints the clean line when only PASS rows are open"
 
+# A present-but-FAILING roborev (nonzero exit) must report UNKNOWN, not a false
+# "0 open findings ✓" — silent-clean on a broken/unreachable daemon is the
+# anti-goal the seed's always-on lines exist to prevent.
+fs_fail="$tmp/fakeroborev_fail"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$fs_fail"; chmod +x "$fs_fail"
+out=$( roborev_findings_summary "$fs_fail" 2>&1 )
+assert_contains "$out" "UNKNOWN" "findings summary reports UNKNOWN when 'roborev list' fails (no false clean)"
+assert_not_contains "$out" "0 open findings on this branch ✓" "findings summary does NOT print the clean line on a list failure"
+
+# Unparseable `roborev list` output (rc=0 but not JSON) -> UNKNOWN, not clean.
+fs_garbage="$tmp/fakeroborev_garbage"
+printf '#!/usr/bin/env bash\n[ "$1" = "list" ] && echo "this is not json"\n' > "$fs_garbage"; chmod +x "$fs_garbage"
+out=$( roborev_findings_summary "$fs_garbage" 2>&1 )
+assert_contains "$out" "UNKNOWN" "findings summary reports UNKNOWN when 'roborev list' output is unparseable"
+
 # Repo+branch scoping is delegated to roborev's `--repo`/`--branch` (server-side).
 # Assert the helper passes BOTH: a stub that honors both returns only this repo's
 # rows on this branch — so a sibling-branch fail AND a sibling-repo fail are both

@@ -38,11 +38,21 @@ roborev_or_warn() {
 #   - keep only `verdict == "F" && !closed` (`--open` includes PASS rows, which
 #     are NOT findings — counting them raw over-reports on a clean branch).
 roborev_findings_summary() {  # roborev_findings_summary <roborev-path>
-  local rb="$1" fails n root branch
+  local rb="$1" fails n root branch raw
   root="$(git rev-parse --show-toplevel 2>/dev/null)"
   branch="$(git branch --show-current 2>/dev/null)"
-  fails="$("$rb" list --open --json ${root:+--repo "$root"} ${branch:+--branch "$branch"} 2>/dev/null \
-    | jq -c '[.[] | select(.verdict=="F" and (.closed | not))]' 2>/dev/null || echo '[]')"
+  # Split the CLI call from the jq filter so a present-but-unreachable roborev
+  # (daemon down, db locked) or unparseable output is reported as UNKNOWN — never
+  # collapsed to "0 open findings ✓". A false-clean is the exact silent-success
+  # the seed's always-on lines exist to prevent.
+  if ! raw="$("$rb" list --open --json ${root:+--repo "$root"} ${branch:+--branch "$branch"} 2>/dev/null)"; then
+    echo "roborev: could NOT list reviews — open-findings status UNKNOWN on this branch" >&2
+    return
+  fi
+  if ! fails="$(printf '%s' "$raw" | jq -c '[.[] | select(.verdict=="F" and (.closed | not))]' 2>/dev/null)"; then
+    echo "roborev: could NOT parse 'roborev list' output — open-findings status UNKNOWN on this branch" >&2
+    return
+  fi
   n="$(printf '%s' "$fails" | jq 'length' 2>/dev/null || echo 0)"
   if [ "${n:-0}" -gt 0 ]; then
     echo "roborev: ${n} open review finding(s) on this branch — review before committing more:" >&2
