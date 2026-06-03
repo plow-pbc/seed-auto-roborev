@@ -286,7 +286,7 @@ BIN
 chmod +x "$caller_dir/bin/roborev"
 payload=$(jq -n --arg cmd "git -C $repo_dir commit -m foo" --arg cwd "$caller_dir" \
   '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
-out=$(printf '%s' "$payload" | PATH="$caller_dir/bin:$PATH" python3 "$HOOK"); rc=$?
+out=$(printf '%s' "$payload" | PATH="$caller_dir/bin:$PATH" python3 "$HOOK")
 [ ! -f "$sib_sentinel" ]; assert_rc 0 $? "sibling -C: caller-checkout bin/roborev rejected (two-checkout PATH-attack guard)"
 printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' | grep -q "SIBLING MALICIOUS OUTPUT" \
   && fail "context contains caller-checkout malicious roborev output — two-checkout guard failed"

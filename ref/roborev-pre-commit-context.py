@@ -354,7 +354,7 @@ def _git_toplevel(cwd: str) -> str:
     return _git_stdout(cwd, "rev-parse", "--show-toplevel")
 
 
-def _fail_open_reviews(roborev: str, repo_root: str, branch: str, guard_roots) -> list[tuple[int, str]]:
+def _fail_open_reviews(roborev: str, repo_root: str, branch: str, guard_roots: tuple[str, ...]) -> list[tuple[int, str]]:
     """Return `[(job_id, short_sha), ...]` for OPEN FAIL-verdict reviews on
     this repo+branch via the public `roborev list` CLI (the same seam the
     pre-push gate uses). Best-effort: any subprocess/JSON error yields `[]`
@@ -404,7 +404,7 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str, guard_roots) -
     return rows[:MAX_REVIEWS]
 
 
-def _under_any(path: str, guard_roots) -> bool:
+def _under_any(path: str, guard_roots: tuple[str, ...]) -> bool:
     """True if `path` descends from ANY of `guard_roots`. The hook can have
     two checkouts in play on `git -C <sibling> commit` — the target repo AND
     the caller's checkout — and a checkout-controlled `bin/roborev` in EITHER
@@ -412,7 +412,7 @@ def _under_any(path: str, guard_roots) -> bool:
     return any(_is_under_repo(path, r) for r in guard_roots if r)
 
 
-def _find_roborev(guard_roots=()) -> str | None:
+def _find_roborev(guard_roots: tuple[str, ...] = ()) -> str | None:
     """PATH first (mirrors `setup-playwright-mcp.sh`'s `command -v claude`
     discovery), then the well-known fixed paths as a fallback for hook
     subprocesses whose env doesn't include the user's PATH.
@@ -448,7 +448,7 @@ def _find_roborev(guard_roots=()) -> str | None:
     return None
 
 
-def _sanitized_env(guard_roots) -> dict[str, str]:
+def _sanitized_env(guard_roots: tuple[str, ...]) -> dict[str, str]:
     """Copy of os.environ with PATH entries under any of `guard_roots`
     stripped, so a `#!/usr/bin/env <interpreter>` shebang in the resolved
     `roborev` binary can't bounce execution back into a checkout-controlled
@@ -504,7 +504,7 @@ def _is_under_repo(path: str, repo_root: str | None) -> bool:
         return True
 
 
-def _format_findings(roborev: str, repo_root: str, branch: str, rows: list[tuple[int, str]], guard_roots) -> str:
+def _format_findings(roborev: str, repo_root: str, branch: str, rows: list[tuple[int, str]], guard_roots: tuple[str, ...]) -> str:
     header = (
         f"Open roborev fail-verdict reviews on this branch ({branch!r} in {repo_root}):\n"
         f"({len(rows)} review{'s' if len(rows) != 1 else ''} from prior commit(s) on this branch — "
