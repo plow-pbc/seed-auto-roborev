@@ -61,13 +61,12 @@ from _roborev_hooklib import (
     TERMINAL_STATUSES,
 )
 
-# How long to wait for in-flight reviews. Fixed at 600s — under the installer's
+# How long to wait for in-flight reviews. Fixed — under the installer's
 # registered 660s hook timeout, so the timeout-deny JSON always emits before
-# Claude Code kills the hook. Not an operator knob (nobody's needed to tune the
-# push wait at the current scale); the ROBOREV_PUSH_WAIT_SECS env read is an
-# undocumented TEST SEAM so the timeout-deny path can be induced fast in a unit
-# test — keep it ≤600 if you ever set it, or the deny gets killed mid-wait.
-WAIT_TIMEOUT_SECS = int(os.environ.get("ROBOREV_PUSH_WAIT_SECS", "600"))
+# Claude Code kills the hook. Not configurable: no env read, so no mistyped
+# value can crash the hook before _deny() and no >660 value can get the deny
+# killed mid-wait.
+WAIT_TIMEOUT_SECS = 600
 
 
 _LIST_FAIL_REASON = (

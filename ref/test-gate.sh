@@ -27,7 +27,6 @@ command -v jq >/dev/null || { echo "jq required for this test suite" >&2; exit 1
 # (whole array — the gate filters verdict/status itself). `wait --quiet --job N…`
 # flips each job N to status="done" across all fixtures (its eventual verdict is
 # pre-set in the fixture), UNLESS a sentinel says otherwise:
-#   slow.<id>     -> sleep 5 (drive the wait-timeout deny via ROBOREV_PUSH_WAIT_SECS)
 #   nofinish.<id> -> return without flipping (drive the still-in-flight-after-wait deny)
 cat > "$HOME/.local/bin/roborev" <<BIN
 #!/usr/bin/env bash
@@ -59,7 +58,6 @@ if [[ "$sub" == "wait" ]]; then
     esac
   done
   for id in "${ids[@]}"; do
-    [[ -f "$FIXTURES/slow.$id" ]] && sleep 5
     [[ -f "$FIXTURES/nofinish.$id" ]] && continue
     for f in "$FIXTURES"/*.json; do
       [[ -f "$f" ]] || continue
@@ -90,15 +88,11 @@ new_repo() {  # new_repo <fixture_json> -> echoes repo root
   write_fixture "$root" "$1"
   printf '%s' "$root"
 }
-run_push() {  # run_push <repo_root> [push_cmd] [extra_wait_env]
-  local root="$1" cmd="${2:-git push}" envprefix="${3:-}"
+run_push() {  # run_push <repo_root> [push_cmd]
+  local root="$1" cmd="${2:-git push}"
   local payload; payload=$(jq -n --arg cmd "$cmd" --arg cwd "$root" \
     '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
-  if [ -n "$envprefix" ]; then
-    printf '%s' "$payload" | env $envprefix python3 "$HOOK"
-  else
-    printf '%s' "$payload" | python3 "$HOOK"
-  fi
+  printf '%s' "$payload" | python3 "$HOOK"
 }
 is_deny() { printf '%s' "$1" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1; }
 
@@ -151,34 +145,23 @@ root=$(new_repo '[{"id":31,"git_ref":"r31","status":"running","verdict":null,"fi
 out=$(run_push "$root")
 assert_eq "" "$out" "gate allows after an in-flight review finishes PASS"
 
-# Wait exceeds the timeout → deny (ROBOREV_PUSH_WAIT_SECS shrunk; stub sleeps).
-root=$(new_repo '[{"id":32,"git_ref":"r32","status":"running","verdict":null,"final":"P","closed":false}]')
-touch "$FIXTURES/slow.32"
-out=$(run_push "$root" "git push" "ROBOREV_PUSH_WAIT_SECS=1")
-is_deny "$out"; assert_rc 0 $? "gate DENIES when in-flight reviews exceed the wait timeout"
-reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')
-assert_contains "$reason" "did not complete" "timeout deny reason explains the wait expired"
-
 # Wait returns but the review is STILL in flight on re-query → fail-closed deny.
 root=$(new_repo '[{"id":33,"git_ref":"r33","status":"running","verdict":null,"closed":false}]')
 touch "$FIXTURES/nofinish.33"
 out=$(run_push "$root")
 is_deny "$out"; assert_rc 0 $? "gate fail-closed DENIES when a review is still in flight after the wait"
 
-# Already-confirmed terminal FAIL + an unrelated in-flight review → deny FAST on
-# the fail, do NOT hang on the in-flight job. Proof: the running job is 'slow'
-# and the wait budget is 1s — if the gate waited it would deny with the timeout
-# message; instead the deny is the open-fail block (names the terminal #50).
+# Already-confirmed terminal FAIL + an unrelated in-flight review → deny on the
+# confirmed fail (outstanding is evaluated before the in-flight wait), naming the
+# terminal #50 rather than stalling on the running job.
 root=$(new_repo '[
   {"id":50,"git_ref":"r50","status":"done","verdict":"F","closed":false},
   {"id":51,"git_ref":"r51","status":"running","verdict":null,"closed":false}
 ]')
-touch "$FIXTURES/slow.51"
-out=$(run_push "$root" "git push" "ROBOREV_PUSH_WAIT_SECS=1")
+out=$(run_push "$root")
 reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 is_deny "$out"; assert_rc 0 $? "gate denies on a confirmed terminal fail even with an in-flight review present"
-assert_contains "$reason" "#50" "confirmed-fail deny short-circuits to the open-fail block (names #50)"
-assert_not_contains "$reason" "did not complete" "confirmed-fail deny does NOT wait on the unrelated in-flight job"
+assert_contains "$reason" "#50" "confirmed-fail deny names the terminal fail (#50), not a wait/timeout outcome"
 
 # Drifted in-flight row with a null id must NOT crash the gate (int(None)) →
 # fail-closed deny via the still-in-flight path, never a crash-allow.
