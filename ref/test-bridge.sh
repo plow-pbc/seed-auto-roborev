@@ -242,7 +242,7 @@ qb_home="$(mktemp -d)"; qb_repo="$(mktemp -d)"
 ( cd "$qb_repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 qb_out=$(printf '%s' "$(jq -n --arg cmd 'git commit -m "a && b"' --arg cwd "$qb_repo" \
   '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')" \
-  | HOME="$qb_home" PATH="/usr/bin:/bin" "$HOOK")
+  | HOME="$qb_home" PATH="/usr/bin:/bin" ROBOREV_BIN_CANDIDATES=/nonexistent/roborev "$HOOK")
 printf '%s' "$qb_out" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1
 assert_rc 0 $? "hard-block: quoted operator in commit message does NOT bypass the missing-roborev deny"
 rm -rf "$qb_home" "$qb_repo"
@@ -374,12 +374,12 @@ assert_contains "$ctx" "redacted private key block" "unterminated PEM block repl
 hb_home="$(mktemp -d)"; hb_repo="$(mktemp -d)"
 ( cd "$hb_repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 hb_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s"}' "$hb_repo" \
-  | HOME="$hb_home" PATH="/usr/bin:/bin" "$HOOK")
+  | HOME="$hb_home" PATH="/usr/bin:/bin" ROBOREV_BIN_CANDIDATES=/nonexistent/roborev "$HOOK")
 printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1
 assert_rc 0 $? "hard-block: missing roborev binary on git-commit path -> permissionDecision=deny"
 printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("ref/install.sh")' >/dev/null 2>&1
 assert_rc 0 $? "hard-block: deny reason points at the real seed installer (ref/install.sh, not the nonexistent install-roborev recipe)"
-hb_noop=$(printf '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}' | HOME="$hb_home" PATH="/usr/bin:/bin" "$HOOK")
+hb_noop=$(printf '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}' | HOME="$hb_home" PATH="/usr/bin:/bin" ROBOREV_BIN_CANDIDATES=/nonexistent/roborev "$HOOK")
 assert_eq "" "$hb_noop" "hard-block: non-commit Bash with no roborev stays a silent no-op (never denies)"
 rm -rf "$hb_home" "$hb_repo"
 

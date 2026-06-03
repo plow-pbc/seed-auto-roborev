@@ -14,8 +14,21 @@ moment Claude is about to commit again.
 
 Triggers when the Bash command is `git commit` OR `git -C <dir> commit`
 (latter is used by the `/cleanup` skill committing into a sibling
-checkout). Every other Bash invocation is a silent no-op (empty stdout,
-exit 0).
+checkout), including operator-separated segments (`a && git commit …`)
+and quoted operators in the message (`-m "x && y"`). Every other Bash
+invocation is a silent no-op (empty stdout, exit 0).
+
+ACCEPTED LIMITATION (by design, not a security boundary): this is a
+best-effort convenience + broken-install nudge, not a control an
+adversary evades. It does NOT attempt full shell emulation, so a few
+wrapped/multi-statement forms a Claude agent rarely emits — a leading
+env assignment (`X=y git commit`), a preceding `cd <dir> && git commit`
+from a non-repo cwd, or a newline-joined `git add … \n git commit` — may
+no-op or resolve the fallback cwd. The cost is just "findings not
+surfaced / broken-install not flagged on THIS commit", caught on the
+next plain commit; roborev's own universal git pre/post-commit hooks
+fire regardless. Don't grow the parser to chase these — handle them only
+if a form proves to actually bite in practice.
 
 Unlike the universal git `pre-commit` hook (warn-only, prints to the
 terminal), this bridge HARD-BLOCKS the commit if the roborev binary is
@@ -401,8 +414,20 @@ def _find_roborev(repo_root: str | None = None) -> str | None:
     found = shutil.which("roborev")
     if found and os.path.isabs(found) and not _is_under_repo(found, repo_root):
         return os.path.realpath(found)
-    for p in ROBOREV_CANDIDATES:
-        if p.is_file() and os.access(p, os.X_OK):
+    # Fixed-path fallback. `ROBOREV_BIN_CANDIDATES` (os.pathsep-separated) is a
+    # test seam that REPLACES the defaults, so the missing-binary deny path is
+    # exercisable host-independently — without it, a host with roborev at a
+    # fixed candidate (e.g. /opt/homebrew/bin on a Homebrew Mac) can't test
+    # "missing". The `_is_under_repo` guard is applied to candidates too (a
+    # no-op for the trusted absolute defaults; it keeps a repo-controlled
+    # override path from being executed).
+    override = os.environ.get("ROBOREV_BIN_CANDIDATES")
+    candidates = (
+        tuple(Path(p) for p in override.split(os.pathsep) if p)
+        if override is not None else ROBOREV_CANDIDATES
+    )
+    for p in candidates:
+        if p.is_file() and os.access(p, os.X_OK) and not _is_under_repo(str(p), repo_root):
             return str(p)
     return None
 

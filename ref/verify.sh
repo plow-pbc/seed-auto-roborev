@@ -43,7 +43,7 @@ else
 fi
 hb_repo="$(mktemp -d)"; ( cd "$hb_repo" && git init -q )
 hb_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s"}' "$hb_repo" \
-  | HOME="$(mktemp -d)" PATH="/usr/bin:/bin" "$BRIDGE" 2>/dev/null)
+  | HOME="$(mktemp -d)" PATH="/usr/bin:/bin" ROBOREV_BIN_CANDIDATES=/nonexistent/roborev "$BRIDGE" 2>/dev/null)
 printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1 \
   && ok "^v-bridge[hardblock]: denies a commit when roborev binary is missing" \
   || bad "^v-bridge[hardblock]: did NOT deny on missing roborev binary"
