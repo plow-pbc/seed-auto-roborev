@@ -331,6 +331,10 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
             for j in jobs
             if isinstance(j, dict) and j.get("verdict") == "F" and not j.get("closed", False)
         ]
+        # Sort newest-first explicitly (the replaced SQL had ORDER BY id DESC).
+        # The CLI's default order is an unverified external contract; sorting
+        # here guarantees the cap keeps the newest findings regardless.
+        rows.sort(key=lambda t: t[0], reverse=True)
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError,
             ValueError, KeyError, TypeError, AttributeError):
         return []
