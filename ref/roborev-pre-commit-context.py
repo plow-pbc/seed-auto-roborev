@@ -154,10 +154,12 @@ def main() -> int:
                 "permissionDecisionReason": (
                     "roborev binary not found, but the seed-roborev Claude bridge "
                     "hook is active — the install is broken and this commit would "
-                    "NOT be reviewed. Re-run `just install-roborev` (or the seed's "
-                    "ref/install.sh) to restore it, then retry. To bypass "
-                    "intentionally, remove the PreToolUse[Bash] roborev entry from "
-                    "~/.claude/settings.json."
+                    "NOT be reviewed. Re-run the seed installer directly to restore "
+                    "it: `bash <seed-roborev>/ref/install.sh`, then retry. (`just "
+                    "install-roborev` is the claude-config entry point that clones "
+                    "and runs this seed — it is not a recipe in this repo.) To "
+                    "bypass intentionally, remove the PreToolUse[Bash] roborev entry "
+                    "from ~/.claude/settings.json."
                 ),
             }
         }

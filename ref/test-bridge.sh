@@ -376,8 +376,8 @@ hb_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},
   | HOME="$hb_home" PATH="/usr/bin:/bin" "$HOOK")
 printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1
 assert_rc 0 $? "hard-block: missing roborev binary on git-commit path -> permissionDecision=deny"
-printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("install-roborev")' >/dev/null 2>&1
-assert_rc 0 $? "hard-block: deny reason points at the re-install command"
+printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("ref/install.sh")' >/dev/null 2>&1
+assert_rc 0 $? "hard-block: deny reason points at the real seed installer (ref/install.sh, not the nonexistent install-roborev recipe)"
 hb_noop=$(printf '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}' | HOME="$hb_home" PATH="/usr/bin:/bin" "$HOOK")
 assert_eq "" "$hb_noop" "hard-block: non-commit Bash with no roborev stays a silent no-op (never denies)"
 rm -rf "$hb_home" "$hb_repo"
