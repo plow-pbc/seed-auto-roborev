@@ -70,6 +70,17 @@ repo2="$tmp/repo2"; mkdir -p "$repo2"; ( cd "$repo2" && git init -q )
 out=$( ( cd "$repo2"; chain_repo_hook pre-commit "/self"; echo CONTINUED ) 2>&1 )
 assert_contains "$out" "CONTINUED" "chain_repo_hook returns when no repo-local hook exists"
 
+# --- chain_repo_hook restores the caller's PATH for the exec'd repo hook -----
+# The fix is `PATH="$ROBOREV_ORIG_PATH" exec "$repo_hook"`; a regression dropping
+# it would run the chained hook under the truncated 5-dir PATH. Source the lib
+# with a sentinel dir on PATH (which the sanitized PATH never contains) and
+# assert the exec'd repo-local hook sees it — i.e. the caller's PATH was restored.
+repo4="$tmp/repo4"; mkdir -p "$repo4"; ( cd "$repo4" && git init -q )
+printf '#!/usr/bin/env bash\necho "CHAINED_PATH=$PATH"\n' > "$repo4/.git/hooks/pre-commit"
+chmod +x "$repo4/.git/hooks/pre-commit"
+out=$( ( PATH="$tmp/SENTINEL_BIN:$PATH"; . "$LIB"; cd "$repo4"; chain_repo_hook pre-commit "/not/self" ) 2>&1 )
+assert_contains "$out" "$tmp/SENTINEL_BIN" "chain_repo_hook restores the caller's PATH for the exec'd repo hook (not the sanitized 5-dir PATH)"
+
 # --- chain_repo_hook: recursion guard — repo-local hook IS this wrapper ------
 # When core.hooksPath and a repo-local .git/hooks copy resolve to the same file,
 # the `-ef self` guard must stop the wrapper exec-ing itself into an infinite

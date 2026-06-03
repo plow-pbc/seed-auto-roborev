@@ -314,6 +314,21 @@ assert_not_contains "$ctx" "roborev-review-id=80" "cap: oldest (80) dropped by M
 assert_contains "$ctx" "showing the 5 newest" "cap: header reports the truncation (no silent cap)"
 assert_contains "$ctx" "other 2" "cap: header reports how many were dropped"
 
+# Test: a row with NO `branch` key still surfaces — the field-absent fallback of
+# the Python branch re-filter (an older roborev that omits `branch` falls back to
+# server-side `--branch` scoping, not "drop everything").
+ctx=$(run_commit_for_fixture '[
+  {"id":90,"git_ref":"nobranch01","verdict":"F","closed":false,"body":"row with no branch field"}
+]')
+assert_contains "$ctx" "roborev-review-id=90" "branch re-filter: a row missing the branch field still surfaces"
+
+# Test: a fully-qualified `refs/heads/<branch>` row still matches git's short
+# `--show-current` name (the removeprefix normalization), so it isn't dropped.
+ctx=$(run_commit_for_fixture '[
+  {"id":91,"git_ref":"refsheads01","branch":"refs/heads/feature/x","verdict":"F","closed":false,"body":"fully-qualified ref"}
+]')
+assert_contains "$ctx" "roborev-review-id=91" "branch re-filter: refs/heads/<branch> normalizes to the short name (not dropped)"
+
 # --- missing roborev binary -> loud WARNING into context (never deny) --------
 # A git-commit payload in a real repo with NO roborev binary reachable must
 # surface a loud, actionable warning (broken-install signal) — NOT deny, and
