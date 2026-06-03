@@ -37,16 +37,22 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
-import shutil
 import subprocess
 import sys
-from pathlib import Path
 
+# Command parser, git/roborev discovery, and the shared "outstanding finding"
+# definition (`_list_jobs` + `_is_open_fail`) live in the sibling lib so this
+# warn-surface and the pre-push deny-surface agree on what counts.
+from _roborev_hooklib import (
+    _resolve_repo_cwd,
+    _find_roborev,
+    _inside_git_repo,
+    _current_branch,
+    _git_toplevel,
+    _list_jobs,
+    _is_open_fail,
+)
 
-# The seed installs roborev here (ref/install.sh). Trust that path first; fall
-# back to PATH for a dev who keeps it elsewhere.
-SEEDED_ROBOREV = Path.home() / ".local" / "bin" / "roborev"
 MAX_REVIEWS = 5
 MISSING_ROBOREV_WARNING = (
     "⚠️ roborev is not installed, but the seed-roborev Claude bridge hook is "
@@ -116,7 +122,7 @@ def main() -> int:
         return 0
     cmd = (payload.get("tool_input") or {}).get("command", "")
     fallback_cwd = payload.get("cwd") or os.getcwd()
-    cwd = _resolve_repo_cwd(cmd, fallback_cwd)
+    cwd = _resolve_repo_cwd(cmd, fallback_cwd, "commit")
     if cwd is None:                      # not a real `git ... commit` — silent no-op
         return 0
 
@@ -142,167 +148,27 @@ def main() -> int:
     return 0
 
 
-_OPERATOR_TOKENS = {"&&", "||", "|", ";", "&"}
-
-
-def _split_into_segments(cmd: str) -> list[list[str]]:
-    """Tokenize `cmd` once (quote-aware) and split the token stream on shell
-    operator tokens (`&&`, `||`, `|`, `;`, `&`) into per-segment token lists.
-
-    Uses `shlex(..., punctuation_chars=True)`, which groups runs of `&|;` into
-    standalone tokens while leaving quoted argument strings (`-m "x && y"`)
-    intact — so an operator *inside* a quoted commit message is preserved as
-    part of the argument and never splits a segment. Returns `[]` on a tokenizer
-    error (unbalanced quote), which fails closed to "no git-commit segment"."""
-    try:
-        lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
-        lexer.whitespace_split = True
-        tokens = list(lexer)
-    except ValueError:
-        return []
-    segments: list[list[str]] = []
-    current: list[str] = []
-    for tok in tokens:
-        if tok in _OPERATOR_TOKENS:
-            segments.append(current)
-            current = []
-        else:
-            current.append(tok)
-    segments.append(current)
-    return segments
-
-
-def _resolve_repo_cwd(cmd: str, fallback_cwd: str) -> str | None:
-    """Validate that `cmd` contains a real `git ... commit ...` invocation and
-    return the cwd it operates on, else None (`echo git ... commit` is a
-    no-match — the first shlex token must be exactly `git`).
-
-    If found, returns the value of `-C` ($VAR / ~ expanded), else `fallback_cwd`.
-    Scoped to the git-commit segment: `-C` in other shell segments or after
-    `commit` is ignored; last `-C` before `commit` wins (git's own semantics)."""
-    for tokens in _split_into_segments(cmd):
-        if not tokens or tokens[0] != "git":
-            continue
-        commit_idx = _find_subcommand_idx(tokens)
-        if commit_idx is None or tokens[commit_idx] != "commit":
-            continue
-        resolved = None
-        for i in range(commit_idx):
-            if tokens[i] == "-C" and i + 1 < commit_idx:
-                path = tokens[i + 1]
-                expanded = os.path.expanduser(os.path.expandvars(path))
-                if "$" in expanded:
-                    continue  # unresolvable env var
-                if not os.path.isabs(expanded):
-                    base = resolved if resolved else fallback_cwd
-                    expanded = os.path.normpath(os.path.join(base, expanded))
-                resolved = expanded
-        return resolved if resolved else fallback_cwd
-    return None
-
-
-# git's global options that take a separate argument token (`-X val`). Long
-# `--opt=val` forms carry their value in the same token; the startswith("-")
-# clause in _find_subcommand_idx handles them.
-_GIT_GLOBAL_OPTS_WITH_ARG = {"-C", "-c"}
-
-
-def _find_subcommand_idx(tokens: list[str]) -> int | None:
-    """Index of git's subcommand token (first non-option after `git`). Skips
-    global options and option+arg pairs (-C <dir>, -c <kv>). None if absent."""
-    i = 1
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok in _GIT_GLOBAL_OPTS_WITH_ARG:
-            i += 2  # skip the option AND its arg
-            continue
-        if tok.startswith("-"):
-            i += 1  # short flag w/o arg, --long, or --long=val
-            continue
-        return i
-    return None
-
-
-def _find_roborev() -> str | None:
-    """Resolve roborev: the seed-installed path (`~/.local/bin/roborev`) first,
-    then PATH for a dev who keeps it elsewhere. None if none is reachable —
-    a broken install, which the caller surfaces as a warning."""
-    if SEEDED_ROBOREV.is_file() and os.access(SEEDED_ROBOREV, os.X_OK):
-        return str(SEEDED_ROBOREV)
-    found = shutil.which("roborev")
-    return found if found and os.path.isabs(found) else None
-
-
-def _find_git() -> str | None:
-    return shutil.which("git")
-
-
-def _git_stdout(cwd: str, *args: str) -> str:
-    """Run `git <args>` in `cwd`; trimmed stdout on success, "" else. Swallows
-    all subprocess/OS errors so the hook stays best-effort."""
-    git = _find_git()
-    if git is None:
-        return ""
-    try:
-        r = subprocess.run(
-            [git, *args],
-            cwd=cwd, capture_output=True, text=True, timeout=2,
-        )
-    except (subprocess.SubprocessError, OSError):
-        return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
-
-
-def _inside_git_repo(cwd: str) -> bool:
-    return _git_stdout(cwd, "rev-parse", "--is-inside-work-tree") == "true"
-
-
-def _current_branch(cwd: str) -> str:
-    return _git_stdout(cwd, "branch", "--show-current")
-
-
-def _git_toplevel(cwd: str) -> str:
-    """Canonical repo root the daemon stored as `repos.root_path`."""
-    return _git_stdout(cwd, "rev-parse", "--show-toplevel")
-
-
 def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[int, str]]:
     """`[(job_id, short_sha), ...]` for OPEN FAIL-verdict reviews on this
-    repo+branch via the public `roborev list` CLI, newest-first (uncapped — the
-    formatter caps + reports the total). Any subprocess/JSON error yields `[]`
-    (informational hook)."""
+    repo+branch, newest-first (uncapped — the formatter caps + reports the
+    total). Shares the job fetch (`_list_jobs`) and the outstanding-finding
+    predicate (`_is_open_fail`) with the pre-push gate so the warn and deny
+    surfaces can never disagree on what counts. A drifted row (missing/null
+    `id`/`git_ref`) fails soft to `[]` rather than crashing the commit hook."""
+    # Warn surface: a `roborev list` failure (None) maps to [] — under-reporting
+    # a non-blocking context hint is benign (the push gate is where None must
+    # fail closed, not here).
     try:
-        r = subprocess.run(
-            [roborev, "list", "--json", "--repo", repo_root, "--branch", branch],
-            cwd=repo_root, capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode != 0:
-            return []
-        jobs = json.loads(r.stdout)
-        if not isinstance(jobs, list):
-            return []
-        # Build rows INSIDE the try: free-form CLI JSON has no schema guarantee,
-        # so a drifted shape (missing/null `id`, non-dict entry) must fail soft
-        # to `[]`, not crash. The `verdict == "F"` predicate is LOAD-BEARING —
-        # `roborev list --open` returns PASS verdicts too; dropping it would
-        # inject passing reviews into context. `not closed` drops acknowledged
-        # (via `roborev close`) reviews the unfiltered list still includes.
-        # Repo+branch scoping is delegated to `--repo`/`--branch` (verified to
-        # filter server-side); we trust that the same way we trust the CLI's
-        # `--json`/`verdict` contract, rather than re-implementing the branch
-        # comparison client-side (which diverged from the shell hook over ref
-        # format / null / detached-HEAD — a parity-bug class not worth carrying).
         rows = [
             (int(j["id"]), str(j["git_ref"])[:8])
-            for j in jobs
-            if isinstance(j, dict) and j.get("verdict") == "F" and not j.get("closed", False)
+            for j in (_list_jobs(roborev, repo_root, branch) or [])
+            if _is_open_fail(j)
         ]
-        # Sort newest-first so the cap keeps the newest findings regardless of
-        # the CLI's (unverified) default order.
-        rows.sort(key=lambda t: t[0], reverse=True)
-    except (subprocess.SubprocessError, OSError, json.JSONDecodeError,
-            ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         return []
+    # Sort newest-first so the cap keeps the newest findings regardless of the
+    # CLI's (unverified) default order.
+    rows.sort(key=lambda t: t[0], reverse=True)
     return rows
 
 

@@ -49,6 +49,45 @@ printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.additionalContext | contains(
   || bad "^v-bridge[warn]: did NOT warn on missing roborev binary"
 rm -rf "$hb_repo"
 
+# --- ^v-gate — Claude Code pre-push gate (seed-owned PreToolUse[Bash]) --------
+HOOKLIB="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/_roborev_hooklib.py"
+GATE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-push-gate.py"
+[ -f "$HOOKLIB" ] && ok "^v-lib: shared hooklib installed at $HOOKLIB" || bad "^v-lib: missing at $HOOKLIB (bridge + gate import it)"
+[ -x "$GATE" ] && ok "^v-gate[file]: installed at $GATE" || bad "^v-gate[file]: missing/not-exec at $GATE"
+if [ -f "$HOME/.claude/settings.json" ] && \
+   jq -e --arg g "$GATE" 'any(.hooks.PreToolUse[]?;
+     .matcher == "Bash" and
+     any(.hooks[]?; .type == "command" and .command == $g and .timeout == 660))' \
+   "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "^v-gate[settings]: PreToolUse[Bash] gate entry present (timeout 660)"
+else
+  bad "^v-gate[settings]: PreToolUse[Bash] gate entry (timeout 660) NOT found in ~/.claude/settings.json"
+fi
+# ^v-gate[allow]: a non-push Bash command must be allowed — AND the gate must
+# exit cleanly. Capture stderr + status so a silent CRASH (import error, missing
+# python3 under the stripped PATH, any unhandled exception) can't masquerade as
+# "allowed" by also producing empty stdout.
+ga_cwd="$(mktemp -d)"; ga_home="$(mktemp -d)"; ga_err="$(mktemp)"
+ga_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"%s"}' "$ga_cwd" \
+  | HOME="$ga_home" PATH="/usr/bin:/bin" "$GATE" 2>"$ga_err"); ga_rc=$?
+if [ "$ga_rc" -eq 0 ] && [ -z "$ga_out" ] && [ ! -s "$ga_err" ]; then
+  ok "^v-gate[allow]: non-push Bash command is allowed (clean exit, no deny)"
+else
+  bad "^v-gate[allow]: gate did not cleanly allow (rc=$ga_rc, stdout='$ga_out', stderr='$(cat "$ga_err")')"
+fi
+rm -rf "$ga_cwd" "$ga_home" "$ga_err"
+# ^v-gate[headroom]: the registered hook timeout MUST exceed the gate's wait cap
+# (_MAX_WAIT_SECS), or a slow review's timeout-deny is SIGKILLed before it emits
+# and the push fails OPEN. Ties the two numbers (in settings.json vs the gate
+# source) so an edit to either that breaks the invariant fails verification.
+gate_timeout=$(jq -r --arg g "$GATE" 'first(.hooks.PreToolUse[]? | select(.matcher=="Bash") | .hooks[]? | select(.command==$g) | .timeout) // 0' "$HOME/.claude/settings.json" 2>/dev/null)
+max_wait=$(grep -oE '_MAX_WAIT_SECS[[:space:]]*=[[:space:]]*[0-9]+' "$GATE" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+if [ -n "$max_wait" ] && [ "${gate_timeout:-0}" -gt "$max_wait" ]; then
+  ok "^v-gate[headroom]: hook timeout ($gate_timeout) > wait cap _MAX_WAIT_SECS ($max_wait)"
+else
+  bad "^v-gate[headroom]: hook timeout ($gate_timeout) must exceed _MAX_WAIT_SECS ($max_wait) or the timeout-deny is killed before it emits (fail-open)"
+fi
+
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → second commit → confirm the open-findings warning surfaced.
