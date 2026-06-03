@@ -10,7 +10,7 @@ The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RE
 
 Software (external system requirements):
 
-- **`roborev`** — the local AI commit reviewer ([plow-pbc/roborev](https://github.com/plow-pbc/roborev)). `ref/install.sh` resolves an existing `roborev` (on `PATH` or at `~/.local/bin/roborev`) or, if absent, downloads the platform-tagged release asset (`roborev-<os>-<arch>`) into `~/.local/bin`. It stops loudly only on an unsupported OS/arch or a missing published asset.
+- **`roborev`** — the local AI commit reviewer ([plow-pbc/roborev](https://github.com/plow-pbc/roborev)). `ref/install.sh` resolves an existing `roborev` (on `PATH` or at `~/.local/bin/roborev`) or, if absent, downloads the platform-tagged release asset (`roborev-<os>-<arch>`) from a **pinned release tag** and **verifies it against a committed `sha256`** before installing into `~/.local/bin`. It stops loudly on an unsupported OS/arch (no pinned checksum), a missing/unreachable asset, or a checksum mismatch (tampered or stale asset) — it never installs unverified bytes.
 - **`git`**, **`jq`** — standard system tools.
 
 Per-OS service manager (user-scope, no sudo): `systemd --user` (Linux) or `launchd` LaunchAgent (macOS).
@@ -53,7 +53,7 @@ bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/install.sh"
 
 The install action:
 
-- MUST resolve the `roborev` binary: use an existing one (`PATH` / `~/.local/bin`), else auto-fetch the platform-tagged GitHub release asset (`roborev-<os>-<arch>`) into `~/.local/bin`. Stop loudly only on an unsupported OS/arch or a missing published asset.
+- MUST resolve the `roborev` binary: use an existing one (`PATH` / `~/.local/bin`), else auto-fetch the platform-tagged GitHub release asset (`roborev-<os>-<arch>`) from a **pinned release tag** and **verify it against a committed `sha256`** before installing into `~/.local/bin`. MUST stop loudly — never installing unverified bytes — on an unsupported OS/arch (no pinned checksum), a missing/unreachable asset, or a checksum mismatch.
 - MUST set `^obj-agent`'s value globally: `roborev config set --global default_agent claude-code`. (Idempotent — re-setting the same value is a no-op.)
 - MUST install the daemon as a **user-level** service (systemd `--user` / launchd LaunchAgent — no `sudo`). MUST be idempotent on already-running state: if a roborev daemon is already serving, the install enables the unit for boot durability but does NOT start a colliding second instance.
 - MUST set `git config --global core.hooksPath` to the SEED's hooks directory **only if** that config is unset or already equal to it; if a *different* `core.hooksPath` is set, it MUST stop loudly rather than clobber.
