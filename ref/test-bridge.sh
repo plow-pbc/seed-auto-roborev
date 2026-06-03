@@ -119,7 +119,13 @@ run_commit_for_fixture() {  # run_commit_for_fixture <fixture_json>
   git init -q -b feature/x "$d"
   root=$(git -C "$d" rev-parse --show-toplevel)
   write_fixture "$root" "$1"
-  out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$d" | python3 "$HOOK")
+  # `python3 "$HOOK"` is the last pipe stage, so its rc propagates to the
+  # command substitution. Assert it's 0: for the empty-expecting scenarios
+  # (fail-soft, empty-result) a hook CRASH yields empty stdout too, so without
+  # this an uncaught-exception regression would pass `assert_eq "" "$ctx"`
+  # vacuously — defeating the fail-soft test's whole purpose.
+  out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$d" | python3 "$HOOK") \
+    || fail "hook crashed (rc=$?) for fixture in $d"
   printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty'
 }
 
