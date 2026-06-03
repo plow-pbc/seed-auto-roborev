@@ -80,6 +80,14 @@ else
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
+# --- ^v-skill — Claude Code roborev usage skill ------------------------------
+SKILL="$HOME/.claude/skills/roborev/SKILL.md"
+if [ -f "$SKILL" ] && grep -q '^name: roborev$' "$SKILL"; then
+  ok "^v-skill: roborev usage skill installed at $SKILL"
+else
+  bad "^v-skill: roborev skill missing or malformed at $SKILL (expected 'name: roborev' frontmatter)"
+fi
+
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → confirm the open fail-verdict finding surfaces via

@@ -1,6 +1,6 @@
-# seed-roborev
+# seed-auto-roborev
 
-A [SEED](https://github.com/plow-pbc/seed) that turns on **always-on local commit review** with [roborev](https://github.com/plow-pbc/roborev): every commit on the machine is reviewed automatically by a local AI reviewer, and open findings are surfaced before the next commit.
+A [SEED](https://github.com/plow-pbc/seed) that turns on **always-on local commit review** with [roborev](https://github.com/plow-pbc/roborev): every commit on the machine is reviewed automatically by a local AI reviewer, and open findings are surfaced before the next commit. Its point is to let roborev run **autonomously via a Claude Code agent** — the agent commits, the findings come back to it, and it acts on them before pushing.
 
 ## Purpose
 
@@ -14,6 +14,8 @@ This SEED is the one-shot installer for that. It wires both halves of the loop m
 Before `git commit`, a **context bridge** injects open fail-verdict findings for the current repo+branch into the agent's context so it can fix, defer, or `roborev close` them. It lives at the seed-owned path `~/.config/roborev/claude-hooks/roborev-pre-commit-context.py` and is wired into `~/.claude/settings.json`. If the roborev binary has gone missing (a broken-install signal, since the SEED guarantees roborev is installed), the bridge injects a **loud warning** into the agent's context — telling it to re-run the installer before continuing — rather than hard-blocking; it's a dev-tool nudge on a machine the operator controls, not a security gate.
 
 Claude Code also gets a **pre-push gate** (`roborev-pre-push-gate.py`, same seed-owned path): where the bridge only *warns* before a commit, the gate **denies** a `git push` while the branch has open fail-verdict reviews — after waiting up to 600s for in-flight reviews to land. Commit is too frequent to block, so it warns; push is the export boundary, so it gates — the forcing function that stops findings piling up unseen. Both hooks share one `_roborev_hooklib.py`, so they agree on what an "outstanding finding" is. It's Claude-only and bypassable on a box you control — a workflow forcing function against silently pushing over a `verdict=F` you never read, not a security boundary.
+
+Finally, the SEED installs a **`roborev` usage skill** to `~/.claude/skills/roborev/SKILL.md`. The hooks bring findings *to* the agent; the skill teaches the agent how to *use* roborev and the workflow contract those hooks serve — let in-flight reviews finish before push, fix valid findings or `roborev close` declined ones with a reason, never push over an unread `verdict=F` — plus the command reference (`status`/`list`/`show`/`wait`/`close`) and two sharp edges (the daemon unit is `roborev-daemon.service`, not `roborev`; run `roborev close <id>` standalone before `git commit`). It auto-activates on commit/push and lands as a real file, so a config repo that symlink-manages its own skills leaves it intact. The gate *forces* the behavior; the skill *teaches* it, so the contract holds even where the gate is absent or bypassed.
 
 ## Install
 

@@ -204,4 +204,17 @@ rm -f "$tmp_settings"
 chmod 600 "$SETTINGS"
 log "merged PreToolUse[Bash] roborev bridge + pre-push gate into $SETTINGS"
 
-log "seed-roborev install complete — run ref/verify.sh to confirm."
+# --- 7. Claude Code skill: roborev usage + the review-loop contract ----------
+# The §6 hooks bring findings TO the agent; this skill teaches the agent how to
+# USE roborev and the workflow contract it serves (let reviews finish before
+# push, fix or `roborev close` fail-verdict findings, never push over an unread
+# verdict=F). A skill is Claude Code's native home for "how to use tool X + its
+# loop" and auto-activates on commit/push triggers. Installed to ~/.claude/skills
+# as a real dir: claude-config's `just install` only prunes ITS OWN repo-owned
+# skill symlinks and preserves user-owned entries, so this coexists collision-free.
+SKILL_DIR="$HOME/.claude/skills/roborev"
+mkdir -p "$SKILL_DIR"
+install -m 0644 "$SEED_REPO/skills/roborev/SKILL.md" "$SKILL_DIR/SKILL.md"
+log "installed roborev usage skill -> $SKILL_DIR/SKILL.md"
+
+log "seed-auto-roborev install complete — run ref/verify.sh to confirm."
