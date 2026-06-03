@@ -361,6 +361,14 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
         # object-not-array) must fail soft to `[]` — not crash the hook with a
         # KeyError/TypeError, which would break the docstring's fail-soft
         # promise on every commit.
+        # Filter intent: we want only OPEN (unresolved) FAIL-verdict reviews.
+        # The `verdict == "F"` predicate is LOAD-BEARING and must stay — it is
+        # NOT redundant with any server-side scoping: `roborev list --open`
+        # means "unresolved, ANY verdict" and returns PASS verdicts too
+        # (verified live — passes appear in the open set). Dropping it would
+        # inject passing reviews into Claude's context. The `not closed` half
+        # tracks acknowledged-via-`roborev close` reviews the unfiltered `list`
+        # still includes.
         rows = [
             (int(j["id"]), str(j["git_ref"])[:8])
             for j in jobs
