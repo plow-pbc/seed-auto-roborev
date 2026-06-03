@@ -33,7 +33,10 @@ hp="$(git config --global core.hooksPath || true)"
 BRIDGE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py"
 [ -x "$BRIDGE" ] && ok "^v-bridge[file]: installed at $BRIDGE" || bad "^v-bridge[file]: missing/not-exec at $BRIDGE"
 if [ -f "$HOME/.claude/settings.json" ] && \
-   jq -e --arg b "$BRIDGE" 'any(.hooks.PreToolUse[]?; .hooks[]?.command == $b)' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+   jq -e --arg b "$BRIDGE" 'any(.hooks.PreToolUse[]?;
+     .matcher == "Bash" and
+     any(.hooks[]?; .type == "command" and .command == $b))' \
+   "$HOME/.claude/settings.json" >/dev/null 2>&1; then
   ok "^v-bridge[settings]: PreToolUse[Bash] entry present in ~/.claude/settings.json"
 else
   bad "^v-bridge[settings]: PreToolUse[Bash] roborev entry NOT found in ~/.claude/settings.json"
