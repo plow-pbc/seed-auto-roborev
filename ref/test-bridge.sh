@@ -282,6 +282,21 @@ assert_not_contains "$ctx" "MIIEpAIBAAKCAQEAfakeBASE64keyBODYline1SHOULDnotLEAK"
 assert_not_contains "$ctx" "line2ALSObase64ishSHOULDnotLEAK" "PEM base64 body line 2 is NOT leaked into context"
 assert_contains "$ctx" "redacted private key block" "PEM block is replaced by a redaction marker"
 
+# Test (Probe 4): roborev present but `list` returns no OPEN FAIL reviews ->
+# the bridge ALLOWS (empty stdout, no context surfaced). This is the benign
+# allow path that replaces the old "no reviews.db" gate. Drive a REAL git
+# commit payload through a repo whose fixture has only PASS/closed jobs.
+empty_repo="$tmp/emptyrepo"
+git init -q -b feature/x "$empty_repo"
+empty_root=$(git -C "$empty_repo" rev-parse --show-toplevel)
+write_fixture "$empty_root" '[
+  {"id":60,"git_ref":"pass1234abc","branch":"feature/x","verdict":"P","closed":false,"body":"clean"},
+  {"id":61,"git_ref":"clsd1234abc","branch":"feature/x","verdict":"F","closed":true,"body":"acknowledged"}
+]'
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$empty_repo" | python3 "$HOOK"); rc=$?
+assert_rc 0 "$rc" "empty-result allow path: bridge exits 0"
+assert_eq "" "$out" "empty-result allow path: roborev present + no open FAIL reviews -> empty stdout (allow, no context)"
+
 # --- NEW: hard-block on missing roborev binary -------------------------------
 # Hard-block: a git-commit payload in a real repo with NO roborev binary
 # reachable must DENY the commit (broken-install signal), not no-op.
