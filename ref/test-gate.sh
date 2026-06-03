@@ -192,7 +192,8 @@ assert_contains "$reason" "roborev status" "list-failure deny points at roborev 
 # failure — the gate must ALLOW, else it blocks every push in an untracked repo.
 # (Distinct from the listfail case above: rc 0 + parseable, just no jobs.)
 root=$(new_repo 'null')
-out=$(run_push "$root")
+out=$(run_push "$root"); rc=$?
+assert_rc 0 "$rc" "gate exits 0 (no crash) when roborev list returns JSON null"
 assert_eq "" "$out" "gate ALLOWS a push when roborev list returns JSON null (never-reviewed repo, not a failure)"
 
 # --- status vocabulary: in-flight is a denylist of terminal states -----------
