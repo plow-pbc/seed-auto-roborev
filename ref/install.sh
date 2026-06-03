@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Deterministic implementation of SEED.md ## Dependencies for seed-roborev (v2).
-# Idempotent + fail-loud. Wires always-on roborev on this machine in the DRY-est
-# way the design admits — *roborev owns its own git hooks* (post-commit +
-# post-rewrite) in core.hooksPath, so this SEED does NOT duplicate them. It
-# only adds the missing pre-commit results-check, plus the bits roborev doesn't
-# set up by itself: the review agent (claude-code), the daemon as a managed
-# user-level service, and the global core.hooksPath value.
+# Idempotent + fail-loud. Wires always-on roborev on this machine. roborev owns
+# `post-rewrite` (seeded by `roborev install-hook --force`); this SEED then
+# OVERWRITES `post-commit` + writes `pre-commit` with its own wrappers that add
+# the always-on confirmation lines roborev's stock silent hooks lack (the
+# wrappers still call `roborev post-commit` / `roborev list`, so no
+# double-enqueue). It also sets up the bits roborev doesn't itself: the review
+# agent (claude-code), the daemon as a managed user-level service, the global
+# core.hooksPath value, and the Claude Code PreToolUse[Bash] context bridge.
 set -euo pipefail
 
 HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
