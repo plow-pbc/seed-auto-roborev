@@ -149,6 +149,12 @@ fi
 # the seed adds no wrapper. The agent-facing "this commit isn't being reviewed"
 # signal lives in the Claude context bridge (§6, fires into the agent's context
 # on a missing binary); `verify.sh` is the everyone-covered on-demand check.
+# Remove orphaned wrappers from a prior seed version: the old installer wrote a
+# SEED-owned `pre-commit` + `roborev-hooklib.sh` the current seed no longer
+# manages. `install-hook --force` overwrites post-commit/post-rewrite but would
+# leave these two behind — where the stale `pre-commit` keeps firing on every
+# commit (sourcing the equally-stale lib). Clean them so an upgrade converges.
+rm -f "$HOOKS_DIR/pre-commit" "$HOOKS_DIR/roborev-hooklib.sh"
 ( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
 log "installed roborev git hooks (post-commit + post-rewrite) -> $HOOKS_DIR"
 

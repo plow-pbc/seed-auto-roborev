@@ -28,6 +28,9 @@ hp="$(git config --global core.hooksPath || true)"
 [ "$hp" = "$HOOKS_DIR" ] && ok "^v-hookspath: core.hooksPath=$HOOKS_DIR" || bad "^v-hookspath: core.hooksPath='$hp' (expected $HOOKS_DIR)"
 [ -x "$HOOKS_DIR/post-commit" ]  && ok "^v-postcommit: post-commit executable (roborev-owned)"   || bad "^v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
 [ -x "$HOOKS_DIR/post-rewrite" ] && ok "^v-postrewrite: post-rewrite executable (roborev-owned)" || bad "^v-postrewrite: $HOOKS_DIR/post-rewrite missing or not executable"
+# No orphaned wrappers from a prior seed version (the installer removes them).
+[ ! -e "$HOOKS_DIR/pre-commit" ]         && ok "^v-nostale[pre-commit]: no orphaned seed pre-commit wrapper" || bad "^v-nostale[pre-commit]: stale $HOOKS_DIR/pre-commit from a prior seed — re-run install.sh"
+[ ! -e "$HOOKS_DIR/roborev-hooklib.sh" ] && ok "^v-nostale[hooklib]: no orphaned roborev-hooklib.sh"        || bad "^v-nostale[hooklib]: stale $HOOKS_DIR/roborev-hooklib.sh from a prior seed — re-run install.sh"
 
 # --- ^v-bridge — Claude Code context bridge (seed-owned PreToolUse[Bash]) -----
 BRIDGE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py"
