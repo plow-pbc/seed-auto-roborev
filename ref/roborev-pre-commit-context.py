@@ -185,9 +185,14 @@ def _format_findings(roborev: str, repo_root: str, branch: str, rows: list[tuple
         f"Open roborev fail-verdict reviews on this branch ({branch!r} in {repo_root}):\n"
         f"({total} review{'s' if total != 1 else ''} from prior commit(s) on this branch{cap_note} — "
         f"the daemon's findings haven't been addressed or explicitly closed.)\n\n"
-        "For each: either fix it in this commit, defer (commit anyway), or close "
-        "as acknowledged with `roborev close <id>`. The hook does NOT block this "
-        "commit; this is informational.\n\n"
+        "For each, with judgment per finding: prefer fixing a VALID finding now "
+        "(bugs are cheapest to fix early) — in this commit or a follow-up — then "
+        "`roborev close <id>`; decline an INVALID/YAGNI finding with "
+        "`roborev comment <id> -m \"<why>\"` + `roborev close <id>`. Don't reach "
+        "for `roborev refine`/`roborev fix` — they auto-apply findings without "
+        "that valid-vs-YAGNI judgment. This hook does NOT block the commit (it's "
+        "informational); the pre-push gate is the hard stop, so clearing findings "
+        "here keeps the eventual push unblocked.\n\n"
         f"{UNTRUSTED_DATA_WARNING}\n"
     )
     sections = [header]

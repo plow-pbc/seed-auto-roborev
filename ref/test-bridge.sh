@@ -170,6 +170,8 @@ ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
 assert_contains "$ctx" "roborev-review-id=42" "context surfaces the open fail's job ID"
 assert_contains "$ctx" "FAKE FINDING" "context includes the roborev review body"
 assert_contains "$ctx" "untrusted" "context warns review bodies are untrusted data"
+assert_contains "$ctx" "roborev comment" "context teaches the decline-with-recorded-reason form (comment then close)"
+assert_contains "$ctx" "roborev refine" "context steers the agent off the autonomous refine/fix loop"
 assert_not_contains "$ctx" "roborev-review-id=43" "context excludes verdict=pass reviews"
 assert_not_contains "$ctx" "roborev-review-id=44" "context excludes closed fail reviews (acknowledged via 'roborev close')"
 assert_not_contains "$ctx" "roborev-review-id=45" "context excludes other-branch fail reviews (branch scoping honored, not branch-blind)"

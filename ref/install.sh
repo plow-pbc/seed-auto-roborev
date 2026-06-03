@@ -13,6 +13,12 @@ HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
 SEED_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 log()  { printf '==> %s\n' "$*"; }
 fail() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
+# Portable sha256 of a file (Linux has sha256sum; macOS has shasum, not sha256sum).
+sha256() {
+  if command -v sha256sum >/dev/null;  then sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null;    then shasum -a 256 "$1" | cut -d' ' -f1
+  else fail "need sha256sum or shasum to verify the roborev binary"; fi
+}
 
 # --- 1a. claude code CLI — auto-install via Anthropic's canonical user-scope
 # installer if missing. (User-scope into $HOME/.local/share/claude, no sudo, no
@@ -24,31 +30,37 @@ fi
 [ -x "$HOME/.local/bin/claude" ] || command -v claude >/dev/null || fail "claude CLI still missing post-install"
 
 # --- 1b. roborev binary — auto-fetch from this SEED's GitHub release ---------
-# Truly one-shot: install.sh downloads the platform-tagged binary from
-#   https://github.com/plow-pbc/seed-auto-roborev/releases/latest/download/roborev-<os>-<arch>
-# To support a new platform: build roborev for it and upload the binary with
-# that asset name (see README "Adding a platform").
+# Truly one-shot: install.sh downloads a PINNED, checksum-verified binary from
+#   https://github.com/plow-pbc/seed-auto-roborev/releases/download/$ROBOREV_TAG/roborev-<os>-<arch>
+# The tag + per-asset sha256 are committed here (reviewed in git), so a tampered
+# or silently-swapped release asset fails the checksum gate before it's ever run
+# — not `latest`, which would pull whatever bytes are newest with no tripwire.
+# To bump the version or add a platform: build/obtain the binary, upload it to a
+# release, then update $ROBOREV_TAG / the sha256 below (see README "Adding a
+# platform"). Get a checksum with: shasum -a 256 <file>  (or sha256sum).
+ROBOREV_TAG="v0.1"
 ROBOREV="$(command -v roborev || true)"
 [ -z "$ROBOREV" ] && [ -x "$HOME/.local/bin/roborev" ] && ROBOREV="$HOME/.local/bin/roborev"
 if [ -z "$ROBOREV" ]; then
   case "$(uname -s)-$(uname -m)" in
-    Linux-x86_64)   asset="roborev-linux-x86_64" ;;
-    Linux-aarch64)  asset="roborev-linux-aarch64" ;;
-    Darwin-arm64)   asset="roborev-darwin-arm64" ;;
-    Darwin-x86_64)  asset="roborev-darwin-x86_64" ;;
-    *) fail "unsupported OS/arch for auto-install: $(uname -s)-$(uname -m)" ;;
+    Linux-x86_64)   asset="roborev-linux-x86_64";  sha="e4af0de02926cf0d3fc38176bfc096dbef90807418274655507440b3945f1184" ;;
+    Linux-aarch64)  asset="roborev-linux-aarch64"; sha="fd04959e45a46c8caeafb0fa4954f0abb8c4b041e829c1c3d0163d4cbf28c48a" ;;
+    Darwin-arm64)   asset="roborev-darwin-arm64";  sha="ebaba77e6a62670cd6bcc793fd484eda64b8ecebb1d2f9997e950363c37ab070" ;;
+    *) fail "no pinned roborev binary for $(uname -s)-$(uname -m) at $ROBOREV_TAG. To add one: build roborev, 'gh release upload $ROBOREV_TAG <path>#roborev-<os>-<arch> -R plow-pbc/seed-auto-roborev', add its sha256 to ref/install.sh, then re-run." ;;
   esac
-  url="https://github.com/plow-pbc/seed-auto-roborev/releases/latest/download/$asset"
+  url="https://github.com/plow-pbc/seed-auto-roborev/releases/download/$ROBOREV_TAG/$asset"
   mkdir -p "$HOME/.local/bin"
-  log "fetching $asset from $url"
-  if curl -fsSL "$url" -o "$HOME/.local/bin/roborev.tmp"; then
-    chmod +x "$HOME/.local/bin/roborev.tmp"
-    mv "$HOME/.local/bin/roborev.tmp" "$HOME/.local/bin/roborev"
-    ROBOREV="$HOME/.local/bin/roborev"
-  else
+  log "fetching $asset ($ROBOREV_TAG) from $url"
+  curl -fsSL "$url" -o "$HOME/.local/bin/roborev.tmp" \
+    || { rm -f "$HOME/.local/bin/roborev.tmp"; fail "could not fetch $asset from $url (is it published at $ROBOREV_TAG?)."; }
+  got="$(sha256 "$HOME/.local/bin/roborev.tmp")"
+  if [ "$got" != "$sha" ]; then
     rm -f "$HOME/.local/bin/roborev.tmp"
-    fail "could not fetch $asset (no binary published for $(uname -s)-$(uname -m) yet). To enable: build roborev for this platform and 'gh release upload v0.1 <path>#$asset -R plow-pbc/seed-auto-roborev', then re-run."
+    fail "checksum mismatch for $asset: expected $sha, got $got — refusing to install (tampered or stale release asset). Verify the release, then update the sha256 in ref/install.sh if the bump is intentional."
   fi
+  chmod +x "$HOME/.local/bin/roborev.tmp"
+  mv "$HOME/.local/bin/roborev.tmp" "$HOME/.local/bin/roborev"
+  ROBOREV="$HOME/.local/bin/roborev"
 fi
 log "roborev: $ROBOREV"
 
