@@ -14,6 +14,8 @@ This SEED is the one-shot installer for that. It wires both halves of the loop m
 
 Claude Code additionally gets an *earlier*, richer version of the before-commit check: the SEED installs a `PreToolUse[Bash]` **context bridge** that injects open findings into the agent's context before it runs `git commit`. It lives at the seed-owned path `~/.config/roborev/claude-hooks/roborev-pre-commit-context.py` and is wired into `~/.claude/settings.json`. Complement to the universal git `pre-commit`, not a replacement. If the roborev binary has gone missing (a broken-install signal, since the SEED guarantees roborev is installed), the bridge injects a **loud warning** into the agent's context — telling it to re-run the installer before continuing — rather than hard-blocking; it's a dev-tool nudge on a machine the operator controls, not a security gate.
 
+Claude Code also gets a **pre-push gate** (`roborev-pre-push-gate.py`, same seed-owned path): where the bridge only *warns* before a commit, the gate **denies** a `git push` while the branch has open fail-verdict reviews — after waiting up to 600s for in-flight reviews to land. Commit is too frequent to block, so it warns; push is the export boundary, so it gates — the forcing function that stops findings piling up unseen. Both hooks share one `_roborev_hooklib.py`, so they agree on what an "outstanding finding" is. It's Claude-only and bypassable on a box you control — a workflow forcing function against silently pushing over a `verdict=F` you never read, not a security boundary.
+
 ## Install
 
 If your agent has the `seed-install` skill:
