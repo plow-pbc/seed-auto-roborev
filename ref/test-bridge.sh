@@ -108,6 +108,21 @@ write_fixture() {  # write_fixture <repo_root> <json_array>
   printf '%s' "$2" > "$f"
 }
 
+# Helper: stand up a throwaway repo on branch feature/x, write <fixture_json>
+# keyed on its canonical root, fire a `git commit` payload through the hook, and
+# echo the resulting additionalContext. Collapses the repeated init →
+# show-toplevel → write_fixture → run-commit shape shared by the single-repo
+# scenarios (PEM, empty-result, soft-fail, unterminated-PEM).
+run_commit_for_fixture() {  # run_commit_for_fixture <fixture_json>
+  local d root out
+  d="$(mktemp -d "$tmp/throwaway.XXXXXX")"
+  git init -q -b feature/x "$d"
+  root=$(git -C "$d" rev-parse --show-toplevel)
+  write_fixture "$root" "$1"
+  out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$d" | python3 "$HOOK")
+  printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty'
+}
+
 PEM_BODY='## Review Findings
 - **Severity**: High
 - **Location**: test/file.py:1
@@ -298,9 +313,6 @@ assert_eq "" "$out" "roborev bridge rejects 'git log --grep commit' (subcommand 
 # key body (subsequent lines) leaked into Claude's context. Drive a commit in
 # its own repo whose open-FAIL review body embeds a full fake PEM block and
 # assert the base64 body lines do NOT appear (and a redaction marker does).
-pem_repo="$tmp/pemrepo"
-git init -q -b feature/x "$pem_repo"
-pem_root=$(git -C "$pem_repo" rev-parse --show-toplevel)
 PEM_REVIEW_BODY='## Review Findings
 - **Problem**: leaked key in a fixture file:
 -----BEGIN RSA PRIVATE KEY-----
@@ -309,11 +321,9 @@ line2ALSObase64ishSHOULDnotLEAK111111111111111111111111111111111111
 -----END RSA PRIVATE KEY-----
 ## Summary
 Fake review with a PEM block.'
-write_fixture "$pem_root" "$(jq -n --arg body "$PEM_REVIEW_BODY" '[
+ctx=$(run_commit_for_fixture "$(jq -n --arg body "$PEM_REVIEW_BODY" '[
   {id:50, git_ref:"pem01234abc", branch:"feature/x", verdict:"F", closed:false, body:$body}
-]')"
-out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$pem_repo" | python3 "$HOOK")
-ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
+]')")
 assert_contains "$ctx" "roborev-review-id=50" "PEM scenario surfaces the open fail review"
 assert_not_contains "$ctx" "MIIEpAIBAAKCAQEAfakeBASE64keyBODYline1SHOULDnotLEAK" "PEM base64 body line 1 is NOT leaked into context"
 assert_not_contains "$ctx" "line2ALSObase64ishSHOULDnotLEAK" "PEM base64 body line 2 is NOT leaked into context"
@@ -323,46 +333,31 @@ assert_contains "$ctx" "redacted private key block" "PEM block is replaced by a 
 # the bridge ALLOWS (empty stdout, no context surfaced). This is the benign
 # allow path that replaces the old "no reviews.db" gate. Drive a REAL git
 # commit payload through a repo whose fixture has only PASS/closed jobs.
-empty_repo="$tmp/emptyrepo"
-git init -q -b feature/x "$empty_repo"
-empty_root=$(git -C "$empty_repo" rev-parse --show-toplevel)
-write_fixture "$empty_root" '[
+ctx=$(run_commit_for_fixture '[
   {"id":60,"git_ref":"pass1234abc","branch":"feature/x","verdict":"P","closed":false,"body":"clean"},
   {"id":61,"git_ref":"clsd1234abc","branch":"feature/x","verdict":"F","closed":true,"body":"acknowledged"}
-]'
-out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$empty_repo" | python3 "$HOOK"); rc=$?
-assert_rc 0 "$rc" "empty-result allow path: bridge exits 0"
-assert_eq "" "$out" "empty-result allow path: roborev present + no open FAIL reviews -> empty stdout (allow, no context)"
+]')
+assert_eq "" "$ctx" "empty-result allow path: roborev present + no open FAIL reviews -> no context surfaced (allow)"
 
 # Test (fail-soft): a DRIFTED `list` JSON shape — a job missing its `id` key
 # that still passes the branch filter — must fail soft to empty, NOT raise an
 # uncaught KeyError on every commit (the docstring promises no crash on drift).
-softfail_repo="$tmp/softfailrepo"
-git init -q -b feature/x "$softfail_repo"
-softfail_root=$(git -C "$softfail_repo" rev-parse --show-toplevel)
-write_fixture "$softfail_root" '[
+ctx=$(run_commit_for_fixture '[
   {"git_ref":"noidfield0","branch":"feature/x","verdict":"F","closed":false,"body":"job missing its id key"}
-]'
-out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$softfail_repo" | python3 "$HOOK"); rc=$?
-assert_rc 0 "$rc" "fail-soft on drifted JSON: bridge exits 0 (no traceback)"
-assert_eq "" "$out" "fail-soft on drifted JSON (job missing 'id'): empty stdout, not a crash"
+]')
+assert_eq "" "$ctx" "fail-soft on drifted JSON (job missing 'id'): no context surfaced, not a crash"
 
 # Test (unterminated PEM): a BEGIN PRIVATE KEY + base64 body with NO matching
 # END (truncated mid-key) must still redact the base64 — the terminated-only
 # pattern would leak it.
-untpem_repo="$tmp/untpemrepo"
-git init -q -b feature/x "$untpem_repo"
-untpem_root=$(git -C "$untpem_repo" rev-parse --show-toplevel)
 UNTERM_PEM_BODY='## Review Findings
 - **Problem**: leaked key (truncated, no END terminator):
 -----BEGIN OPENSSH PRIVATE KEY-----
 UNTERMfakeBASE64bodyLINEa_SHOULDnotLEAK
 UNTERMfakeBASE64bodyLINEb_SHOULDnotLEAK'
-write_fixture "$untpem_root" "$(jq -n --arg body "$UNTERM_PEM_BODY" '[
+ctx=$(run_commit_for_fixture "$(jq -n --arg body "$UNTERM_PEM_BODY" '[
   {id:70, git_ref:"untpem012a", branch:"feature/x", verdict:"F", closed:false, body:$body}
-]')"
-out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$untpem_repo" | python3 "$HOOK")
-ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
+]')")
 assert_contains "$ctx" "roborev-review-id=70" "unterminated-PEM scenario surfaces the open fail review"
 assert_not_contains "$ctx" "UNTERMfakeBASE64bodyLINEa_SHOULDnotLEAK" "unterminated PEM (no END): base64 body NOT leaked into context"
 assert_contains "$ctx" "redacted private key block" "unterminated PEM block replaced by the redaction marker"
