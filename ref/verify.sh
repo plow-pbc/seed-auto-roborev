@@ -29,6 +29,26 @@ hp="$(git config --global core.hooksPath || true)"
 [ -x "$HOOKS_DIR/post-commit" ] && ok "^v-postcommit: post-commit executable" || bad "^v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
 [ -x "$HOOKS_DIR/pre-commit" ]  && ok "^v-precommit:  pre-commit executable"  || bad "^v-precommit: $HOOKS_DIR/pre-commit missing or not executable"
 
+# --- ^v-bridge — Claude Code context bridge (seed-owned PreToolUse[Bash]) -----
+BRIDGE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py"
+[ -x "$BRIDGE" ] && ok "^v-bridge[file]: installed at $BRIDGE" || bad "^v-bridge[file]: missing/not-exec at $BRIDGE"
+if [ -f "$HOME/.claude/settings.json" ] && \
+   jq -e --arg b "$BRIDGE" 'any(.hooks.PreToolUse[]?;
+     .matcher == "Bash" and
+     any(.hooks[]?; .type == "command" and .command == $b))' \
+   "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "^v-bridge[settings]: PreToolUse[Bash] entry present in ~/.claude/settings.json"
+else
+  bad "^v-bridge[settings]: PreToolUse[Bash] roborev entry NOT found in ~/.claude/settings.json"
+fi
+hb_repo="$(mktemp -d)"; ( cd "$hb_repo" && git init -q )
+hb_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s"}' "$hb_repo" \
+  | HOME="$(mktemp -d)" PATH="/usr/bin:/bin" "$BRIDGE" 2>/dev/null)
+printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.additionalContext | contains("ref/install.sh")' >/dev/null 2>&1 \
+  && ok "^v-bridge[warn]: warns into context when roborev binary is missing" \
+  || bad "^v-bridge[warn]: did NOT warn on missing roborev binary"
+rm -rf "$hb_repo"
+
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → second commit → confirm the open-findings warning surfaced.
