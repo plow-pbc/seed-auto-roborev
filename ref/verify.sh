@@ -82,8 +82,8 @@ rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
-# wait for review → second commit → confirm the open-findings warning surfaced.
-# Requires all static checks above to have passed.
+# wait for review → confirm the open fail-verdict finding surfaces via
+# `roborev list`. Requires all static checks above to have passed.
 if [ "$fails" -ne 0 ] || [ -z "$ROBOREV" ]; then
   bad "^v-loop: skipped — preconditions failed above"
   printf '\n%d check(s) FAILED\n' "$fails" >&2; exit 1

@@ -40,8 +40,8 @@ Scope limits (by design, not gaps):
     its review) doesn't exist yet. Caught on the next standalone push once the
     review lands. Detecting a trailing push after a commit segment isn't worth
     the parser complexity for a bypass that's trivially available anyway.
-  - Claude-Code-only: codex/human pushes aren't gated (the commit-side git
-    pre-commit shows everyone the findings first).
+  - Claude-Code-only: codex/human pushes aren't gated — this seed's purpose is
+    teaching the Claude Code agent the review loop.
 """
 from __future__ import annotations
 
