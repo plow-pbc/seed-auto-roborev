@@ -81,7 +81,8 @@ Static checks:
 - **^v-binary** — `roborev` resolves on `PATH` or at `~/.local/bin/roborev`.
 - **^v-daemon** — `roborev list` round-trips through the daemon.
 - **^v-agent** — `roborev config get default_agent` equals `claude-code`.
-- **^v-hookspath** — `git config --global core.hooksPath` equals the SEED's hooks dir, with both `post-commit` and `post-rewrite` (both roborev-owned) executable.
+- **^v-hookspath** — `git config --global core.hooksPath` equals the SEED's hooks dir.
+- **^v-postcommit** / **^v-postrewrite** — both roborev-owned hooks (`post-commit`, `post-rewrite`) are present and executable in that dir.
 - **^v-bridge** — the Claude Code context bridge (`^obj-precommit`) is installed executable at `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py`, is registered as a `PreToolUse[Bash]` entry in `~/.claude/settings.json`, and injects a warning into the agent's context (not a `deny`) on a `git commit` when no roborev binary is reachable (broken-install signal).
 - **^v-lib / ^v-gate** — the shared `_roborev_hooklib.py` and the pre-push gate (`^obj-prepush`) `roborev-pre-push-gate.py` are installed alongside the bridge, the gate is registered as a `PreToolUse[Bash]` entry with `timeout: 660`, and a non-push Bash command is allowed (the gate never denies anything but a `git push`).
 
