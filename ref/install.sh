@@ -180,16 +180,7 @@ cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 . "${BASH_SOURCE[0]%/*}/roborev-hooklib.sh"
 if roborev="$(roborev_or_warn)"; then
-  n="$("$roborev" list --open --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
-  if [ "${n:-0}" -gt 0 ]; then
-    {
-      echo "roborev: ${n} open review finding(s) on this branch — review before committing more:"
-      "$roborev" list --open 2>/dev/null | head -20
-      echo "(roborev show <id> for details; this is a non-blocking warning)"
-    } >&2
-  else
-    echo "roborev: 0 open findings on this branch ✓" >&2
-  fi
+  roborev_findings_summary "$roborev"
 fi
 chain_repo_hook pre-commit "${BASH_SOURCE[0]}" "$@"
 exit 0

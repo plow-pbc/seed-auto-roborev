@@ -72,6 +72,10 @@ SECRET_PATTERNS = (
     re.compile(r"\b(github_pat_[A-Za-z0-9_]{30,})\b"),            # GitHub fine-grained PATs (github_pat_…)
     re.compile(r"\b(xox[abporst]-[A-Za-z0-9-]{10,})\b"),         # Slack
     re.compile(r"\b((?:AKIA|ASIA)[A-Z0-9]{16,})\b"),             # AWS access key IDs (AKIA/ASIA)
+    # AWS *secret* access key: 40 base64 chars with NO distinctive prefix, so it
+    # can only be caught assignment-aware (AWS_SECRET_ACCESS_KEY=… / : …). Group 1
+    # is the value; the whole assignment collapses to the redaction marker.
+    re.compile(r"(?i)aws_secret_access_key['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9/+]{40})"),
     re.compile(r"\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b"),  # JWT
 )
 # PEM private keys span multiple lines (BEGIN, base64 body, END). Match the

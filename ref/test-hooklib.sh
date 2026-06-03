@@ -3,11 +3,8 @@
 # its functions under a controlled $HOME/$PATH; no daemon, no install required.
 set -u
 
-ASSERT_PASS=0 ASSERT_FAIL=0
-assert_eq()       { if [ "$1" = "$2" ]; then ASSERT_PASS=$((ASSERT_PASS+1)); else ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s\n  expected: %q\n  actual:   %q\n' "$3" "$1" "$2" >&2; fi; }
-assert_rc()       { if [ "$1" = "$2" ]; then ASSERT_PASS=$((ASSERT_PASS+1)); else ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s (rc expected %s got %s)\n' "$3" "$1" "$2" >&2; fi; }
-assert_contains() { case $1 in *"$2"*) ASSERT_PASS=$((ASSERT_PASS+1));; *) ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s\n  %q does not contain %q\n' "$3" "$1" "$2" >&2;; esac; }
-assert_summary()  { printf '%s passed, %s failed\n' "$ASSERT_PASS" "$ASSERT_FAIL"; [ "$ASSERT_FAIL" -eq 0 ]; }
+# Shared assert harness (assert_eq/_rc/_contains/_not_contains/fail/_summary).
+. "$(cd "$(dirname "$0")" && pwd)/testlib.sh"
 
 LIB="$(cd "$(dirname "$0")" && pwd)/roborev-hooklib.sh"
 [ -f "$LIB" ]; assert_rc 0 $? "hooklib exists"
@@ -30,6 +27,34 @@ assert_rc 1 "$rc" "roborev_or_warn returns 1 when the binary is missing"
 assert_eq "" "$out" "roborev_or_warn prints nothing to stdout when missing"
 assert_contains "$err" "BROKEN INSTALL" "missing roborev warns LOUDLY (not a silent no-op)"
 assert_contains "$err" "ref/install.sh" "missing-roborev warning names the seed installer"
+
+# --- roborev_findings_summary: counts only OPEN FAIL verdicts, not PASS ------
+# `roborev list --open` returns unresolved rows of ANY verdict; only verdict==F
+# && !closed are findings. A fake roborev returns a mixed array; assert the
+# summary counts the 2 open fails and excludes the PASS + closed-fail rows.
+fs_bin="$tmp/fakeroborev"
+cat > "$fs_bin" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "list" ] && echo '[{"id":1,"git_ref":"aaaa1111","verdict":"F","closed":false},
+  {"id":2,"git_ref":"bbbb2222","verdict":"P","closed":false},
+  {"id":3,"git_ref":"cccc3333","verdict":"F","closed":true},
+  {"id":4,"git_ref":"dddd4444","verdict":"F","closed":false}]'
+STUB
+chmod +x "$fs_bin"
+out=$( roborev_findings_summary "$fs_bin" 2>&1 )
+assert_contains "$out" "2 open review finding(s)" "findings summary counts only open FAIL verdicts (PASS + closed-FAIL excluded)"
+assert_not_contains "$out" "bbbb2222" "findings summary excludes PASS-verdict rows from the list"
+assert_not_contains "$out" "cccc3333" "findings summary excludes closed-FAIL rows from the list"
+
+# Clean branch (only PASS open) -> the '0 open findings ✓' line, not 'finding(s)'.
+fs_clean="$tmp/fakeroborev_clean"
+cat > "$fs_clean" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = "list" ] && echo '[{"id":9,"git_ref":"eeee5555","verdict":"P","closed":false}]'
+STUB
+chmod +x "$fs_clean"
+out=$( roborev_findings_summary "$fs_clean" 2>&1 )
+assert_contains "$out" "0 open findings on this branch ✓" "findings summary prints the clean line when only PASS rows are open"
 
 # --- chain_repo_hook: execs a repo-local hook of the same name --------------
 repo="$tmp/repo"; mkdir -p "$repo"; ( cd "$repo" && git init -q )

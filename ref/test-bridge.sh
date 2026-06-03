@@ -9,26 +9,8 @@
 # roborev binary reachable must surface a loud WARNING into context (not deny).
 set -u
 
-# --- inline assert harness (mirrors claude-config tests/assert.sh) -----------
-ASSERT_PASS=0 ASSERT_FAIL=0
-assert_eq() { # assert_eq <expected> <actual> <msg>
-  if [ "$1" = "$2" ]; then ASSERT_PASS=$((ASSERT_PASS+1));
-  else ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s\n  expected: %q\n  actual:   %q\n' "$3" "$1" "$2" >&2; fi
-}
-assert_contains() { # assert_contains <haystack> <needle> <msg>
-  case $1 in *"$2"*) ASSERT_PASS=$((ASSERT_PASS+1));;
-    *) ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s\n  %q does not contain %q\n' "$3" "$1" "$2" >&2;; esac
-}
-assert_not_contains() { # assert_not_contains <haystack> <needle> <msg>
-  case $1 in *"$2"*) ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s\n  %q unexpectedly contains %q\n' "$3" "$1" "$2" >&2;;
-    *) ASSERT_PASS=$((ASSERT_PASS+1));; esac
-}
-assert_rc() { # assert_rc <expected-rc> <actual-rc> <msg>
-  if [ "$1" = "$2" ]; then ASSERT_PASS=$((ASSERT_PASS+1));
-  else ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s (rc expected %s got %s)\n' "$3" "$1" "$2" >&2; fi
-}
-fail() { ASSERT_FAIL=$((ASSERT_FAIL+1)); printf 'FAIL: %s\n' "$1" >&2; }
-assert_summary() { printf '%s passed, %s failed\n' "$ASSERT_PASS" "$ASSERT_FAIL"; [ "$ASSERT_FAIL" -eq 0 ]; }
+# Shared assert harness (assert_eq/_rc/_contains/_not_contains/fail/_summary).
+. "$(cd "$(dirname "$0")" && pwd)/testlib.sh"
 
 HOOK="$(cd "$(dirname "$0")" && pwd)/roborev-pre-commit-context.py"
 [ -x "$HOOK" ]; assert_rc 0 $? "roborev bridge is executable"
@@ -133,7 +115,7 @@ run_commit_for_fixture() {  # run_commit_for_fixture <fixture_json>
 PEM_BODY='## Review Findings
 - **Severity**: High
 - **Location**: test/file.py:1
-- **Problem**: FAKE FINDING for tests. Leaked token: sk-FAKEsecretSHOULDbeMASKEDxyz789 plus github_pat_11ABCDE0aBcDeFgHiJ_kLmNoPqRsTuVwXyZ0123456789AbCdEfGhIjKl
+- **Problem**: FAKE FINDING for tests. Leaked token: sk-FAKEsecretSHOULDbeMASKEDxyz789 plus github_pat_11ABCDE0aBcDeFgHiJ_kLmNoPqRsTuVwXyZ0123456789AbCdEfGhIjKl plus AWS_SECRET_ACCESS_KEY=SHOULDBEMASKEDsecret00000000000000000xy7
 - **Fix**: do the fake fix.
 ## Summary
 Fake review.'
@@ -193,6 +175,7 @@ assert_not_contains "$ctx" "roborev-review-id=45" "context excludes other-branch
 # Secret redaction: the fake review body embeds a token-shaped string.
 assert_not_contains "$ctx" "sk-FAKEsecretSHOULDbeMASKEDxyz789" "context redacts token-shaped secrets in review bodies"
 assert_not_contains "$ctx" "github_pat_11ABCDE0aBcDeFgHiJ" "context redacts fine-grained GitHub PATs (github_pat_)"
+assert_not_contains "$ctx" "SHOULDBEMASKEDsecret00000000000000000xy7" "context redacts AWS secret access keys (assignment-aware, no prefix)"
 assert_contains "$ctx" "redacted secret" "context marks redactions"
 assert_contains "$ctx" "789" "context preserves last-3-chars per CLAUDE.md convention"
 
