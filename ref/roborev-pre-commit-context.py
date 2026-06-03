@@ -93,9 +93,11 @@ SECRET_PATTERNS = (
 # and replace it wholesale — matching only the BEGIN line would leak the base64
 # body. _redact_secrets must therefore run on the full body BEFORE splitlines().
 # Two alternatives, tried left-to-right: a properly terminated BEGIN…END block,
-# else an UNTERMINATED block (BEGIN + body, no END) — which happens when the
-# review body is truncated mid-key (the 40-line cap in _format_findings can drop
-# the END line) — redacted from BEGIN to end-of-text so the base64 can't leak.
+# else an UNTERMINATED block (BEGIN + body, no END) — a body that arrives already
+# partial from `roborev show` (an upstream clip, or a partial key quoted in a
+# diff) — redacted from BEGIN to end-of-text so the base64 can't leak. (Redaction
+# runs on the full body BEFORE _format_findings' line cap, so the cap itself
+# never severs an END off an otherwise-complete block.)
 PEM_BLOCK_PATTERN = re.compile(
     r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z]+ )?PRIVATE KEY-----"
     r"|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*",
@@ -336,7 +338,7 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
         # here guarantees the cap keeps the newest findings regardless.
         rows.sort(key=lambda t: t[0], reverse=True)
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError,
-            ValueError, KeyError, TypeError, AttributeError):
+            ValueError, KeyError, TypeError):
         return []
     return rows[:MAX_REVIEWS]
 
