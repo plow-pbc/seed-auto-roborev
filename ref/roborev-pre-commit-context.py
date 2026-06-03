@@ -92,8 +92,13 @@ SECRET_PATTERNS = (
 # then the END line. Match the WHOLE block (re.DOTALL so `.` crosses newlines)
 # and replace it wholesale — matching only the BEGIN line would leak the base64
 # body. _redact_secrets must therefore run on the full body BEFORE splitlines().
+# Two alternatives, tried left-to-right: a properly terminated BEGIN…END block,
+# else an UNTERMINATED block (BEGIN + body, no END) — which happens when the
+# review body is truncated mid-key (the 40-line cap in _format_findings can drop
+# the END line) — redacted from BEGIN to end-of-text so the base64 can't leak.
 PEM_BLOCK_PATTERN = re.compile(
-    r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z]+ )?PRIVATE KEY-----",
+    r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z]+ )?PRIVATE KEY-----"
+    r"|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*",
     re.DOTALL,
 )
 
@@ -314,13 +319,21 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
         if r.returncode != 0:
             return []
         jobs = json.loads(r.stdout)
-    except (subprocess.SubprocessError, OSError, json.JSONDecodeError, ValueError):
+        if not isinstance(jobs, list):
+            return []
+        # Build the rows INSIDE the try: free-form CLI JSON has no schema
+        # guarantee, so a drifted shape (missing/null `id`, non-dict entry,
+        # object-not-array) must fail soft to `[]` — not crash the hook with a
+        # KeyError/TypeError/AttributeError, which would break the docstring's
+        # fail-soft promise on every commit.
+        rows = [
+            (int(j["id"]), str(j["git_ref"])[:8])
+            for j in jobs
+            if isinstance(j, dict) and j.get("verdict") == "F" and not j.get("closed", False)
+        ]
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError,
+            ValueError, KeyError, TypeError, AttributeError):
         return []
-    rows = [
-        (int(j["id"]), str(j["git_ref"])[:8])
-        for j in jobs
-        if j.get("verdict") == "F" and not j.get("closed", False)
-    ]
     return rows[:MAX_REVIEWS]
 
 

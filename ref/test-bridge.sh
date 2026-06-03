@@ -50,6 +50,10 @@ FIXTURES="$tmp/fixtures"; mkdir -p "$FIXTURES"
 # tester's PATH.
 export PATH="$HOME/.local/bin:$PATH"
 
+# The fake stub + several assertions parse JSON with jq; fail loudly up front
+# rather than swallowing a missing-jq into confusing "empty body" failures.
+command -v jq >/dev/null || { echo "jq required for this test suite" >&2; exit 1; }
+
 # Fake roborev binary. `list --json --repo R --branch B` prints the fixture
 # job array for repo R (or `[]` if none); `show <id>` prints that job's body.
 # The bridge filters verdict=="F" && !closed itself, so the stub returns the
@@ -64,16 +68,21 @@ fixture_for() {  # echoes the fixture path for a given --repo value
   printf '%s/%s.json' "$FIXTURES" "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"
 }
 if [[ "$1" == "list" ]]; then
-  repo=""; shift
+  repo=""; branch=""; shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) repo="$2"; shift 2;;
-      --branch|--limit|--status) shift 2;;
+      --branch) branch="$2"; shift 2;;
+      --limit|--status) shift 2;;
       *) shift;;
     esac
   done
   f="$(fixture_for "$repo")"
-  if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi
+  if [[ -f "$f" ]]; then
+    # Honor --branch like the real CLI: a branch-only or branch-ignoring stub
+    # would never catch a regression where the bridge stops scoping by branch.
+    if [[ -n "$branch" ]]; then jq -c --arg b "$branch" '[.[] | select(.branch==$b)]' "$f"; else cat "$f"; fi
+  else echo '[]'; fi
   exit 0
 fi
 if [[ "$1" == "show" ]]; then
@@ -114,10 +123,12 @@ git init -q -b feature/x "$repo_dir"
 # returns the realpath, and so does the bridge via _git_toplevel).
 repo_root_canonical=$(git -C "$repo_dir" rev-parse --show-toplevel)
 # Job 42: open FAIL (surfaces). 43: PASS (excluded). 44: closed FAIL (excluded).
+# 45: open FAIL but on a DIFFERENT branch (excluded — proves branch scoping).
 write_fixture "$repo_root_canonical" "$(jq -n --arg body "$PEM_BODY" '[
   {id:42, git_ref:"abc12345def", branch:"feature/x", verdict:"F", closed:false, body:$body},
   {id:43, git_ref:"def45678abc", branch:"feature/x", verdict:"P", closed:false, body:"passing review"},
-  {id:44, git_ref:"fed98765abc", branch:"feature/x", verdict:"F", closed:true,  body:"closed/acknowledged review"}
+  {id:44, git_ref:"fed98765abc", branch:"feature/x", verdict:"F", closed:true,  body:"closed/acknowledged review"},
+  {id:45, git_ref:"aaa11122bbb", branch:"main",      verdict:"F", closed:false, body:"other-branch fail"}
 ]')"
 
 other_repo_dir="$tmp/otherrepo"
@@ -156,6 +167,7 @@ assert_contains "$ctx" "FAKE FINDING" "context includes the roborev review body"
 assert_contains "$ctx" "untrusted" "context warns review bodies are untrusted data"
 assert_not_contains "$ctx" "roborev-review-id=43" "context excludes verdict=pass reviews"
 assert_not_contains "$ctx" "roborev-review-id=44" "context excludes closed fail reviews (acknowledged via 'roborev close')"
+assert_not_contains "$ctx" "roborev-review-id=45" "context excludes other-branch fail reviews (branch scoping honored, not branch-blind)"
 # Secret redaction: the fake review body embeds a token-shaped string.
 assert_not_contains "$ctx" "sk-FAKEsecretSHOULDbeMASKEDxyz789" "context redacts token-shaped secrets in review bodies"
 assert_contains "$ctx" "redacted secret" "context marks redactions"
@@ -296,6 +308,39 @@ write_fixture "$empty_root" '[
 out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$empty_repo" | python3 "$HOOK"); rc=$?
 assert_rc 0 "$rc" "empty-result allow path: bridge exits 0"
 assert_eq "" "$out" "empty-result allow path: roborev present + no open FAIL reviews -> empty stdout (allow, no context)"
+
+# Test (fail-soft): a DRIFTED `list` JSON shape — a job missing its `id` key
+# that still passes the branch filter — must fail soft to empty, NOT raise an
+# uncaught KeyError on every commit (the docstring promises no crash on drift).
+softfail_repo="$tmp/softfailrepo"
+git init -q -b feature/x "$softfail_repo"
+softfail_root=$(git -C "$softfail_repo" rev-parse --show-toplevel)
+write_fixture "$softfail_root" '[
+  {"git_ref":"noidfield0","branch":"feature/x","verdict":"F","closed":false,"body":"job missing its id key"}
+]'
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$softfail_repo" | python3 "$HOOK"); rc=$?
+assert_rc 0 "$rc" "fail-soft on drifted JSON: bridge exits 0 (no traceback)"
+assert_eq "" "$out" "fail-soft on drifted JSON (job missing 'id'): empty stdout, not a crash"
+
+# Test (unterminated PEM): a BEGIN PRIVATE KEY + base64 body with NO matching
+# END (truncated mid-key) must still redact the base64 — the terminated-only
+# pattern would leak it.
+untpem_repo="$tmp/untpemrepo"
+git init -q -b feature/x "$untpem_repo"
+untpem_root=$(git -C "$untpem_repo" rev-parse --show-toplevel)
+UNTERM_PEM_BODY='## Review Findings
+- **Problem**: leaked key (truncated, no END terminator):
+-----BEGIN OPENSSH PRIVATE KEY-----
+UNTERMfakeBASE64bodyLINEa_SHOULDnotLEAK
+UNTERMfakeBASE64bodyLINEb_SHOULDnotLEAK'
+write_fixture "$untpem_root" "$(jq -n --arg body "$UNTERM_PEM_BODY" '[
+  {id:70, git_ref:"untpem012a", branch:"feature/x", verdict:"F", closed:false, body:$body}
+]')"
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$untpem_repo" | python3 "$HOOK")
+ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "$ctx" "roborev-review-id=70" "unterminated-PEM scenario surfaces the open fail review"
+assert_not_contains "$ctx" "UNTERMfakeBASE64bodyLINEa_SHOULDnotLEAK" "unterminated PEM (no END): base64 body NOT leaked into context"
+assert_contains "$ctx" "redacted private key block" "unterminated PEM block replaced by the redaction marker"
 
 # --- NEW: hard-block on missing roborev binary -------------------------------
 # Hard-block: a git-commit payload in a real repo with NO roborev binary
