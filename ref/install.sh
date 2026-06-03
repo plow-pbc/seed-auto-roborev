@@ -199,34 +199,49 @@ HOOK
 chmod +x "$HOOKS_DIR/pre-commit"
 log "wrote post-commit + pre-commit (always-on confirmation lines); post-rewrite owned by roborev"
 
-# --- 6. Claude Code context bridge -------------------------------------------
+# --- 6. Claude Code hooks: context bridge + pre-push gate ---------------------
 # The git pre-commit hook (§5, Option B) prints findings to the TERMINAL for a
-# human. This bridge injects open fail-verdict findings into a Claude Code
-# agent's CONTEXT before it commits, AND hard-blocks the commit if roborev has
-# gone missing. Installed to a seed-owned path (NOT ~/.claude/hooks, which is a
-# symlink into the claude-config repo) + registered via ~/.claude/settings.json.
+# human. Two Claude Code PreToolUse[Bash] hooks complement it:
+#   - the context bridge injects open fail-verdict findings into a Claude Code
+#     agent's CONTEXT before it commits, AND hard-blocks the commit if roborev
+#     has gone missing;
+#   - the pre-push gate BLOCKS a Claude-initiated `git push` while the branch
+#     has open fail-verdict reviews, first waiting up to 10 min for any
+#     in-flight reviews to finish.
+# Both share _roborev_hooklib.py (the security-sensitive git/roborev discovery
+# + PATH-attack-guard helpers). All three files install to ONE seed-owned dir
+# (NOT ~/.claude/hooks, a symlink into the claude-config repo) so Python
+# resolves `import _roborev_hooklib` from the hook's own directory; registered
+# via ~/.claude/settings.json.
 BRIDGE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks"
 mkdir -p "$BRIDGE_DIR"
+install -m 0755 "$SEED_REPO/ref/_roborev_hooklib.py"            "$BRIDGE_DIR/_roborev_hooklib.py"
 install -m 0755 "$SEED_REPO/ref/roborev-pre-commit-context.py" "$BRIDGE_DIR/roborev-pre-commit-context.py"
-log "installed Claude bridge -> $BRIDGE_DIR/roborev-pre-commit-context.py"
+install -m 0755 "$SEED_REPO/ref/roborev-pre-push-gate.py"      "$BRIDGE_DIR/roborev-pre-push-gate.py"
+log "installed Claude hooks (lib + bridge + pre-push gate) -> $BRIDGE_DIR"
 
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-command -v jq >/dev/null || fail "jq required to merge the Claude bridge into $SETTINGS"
+command -v jq >/dev/null || fail "jq required to merge the Claude hooks into $SETTINGS"
 bridge_cmd="$BRIDGE_DIR/roborev-pre-commit-context.py"
+gate_cmd="$BRIDGE_DIR/roborev-pre-push-gate.py"
 tmp_settings="$(mktemp "${SETTINGS}.XXXXXX")"
 # Idempotent append-and-dedupe — mirrors claude-config's justfile merge so other
 # PreToolUse hooks (and all other settings) are preserved; re-running dedupes.
-jq --arg cmd "$bridge_cmd" '
+# The gate carries a per-hook timeout:660 — it waits up to 600s for in-flight
+# roborev reviews, +60s headroom so the deny JSON still emits if the wait runs
+# full-length.
+jq --arg bridge "$bridge_cmd" --arg gate "$gate_cmd" '
   def dedupe_keep_order: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
   .hooks = (.hooks // {})
   | .hooks.PreToolUse = (((.hooks.PreToolUse // []) + [
-      {matcher:"Bash", hooks:[{type:"command", command:$cmd}]}
+      {matcher:"Bash", hooks:[{type:"command", command:$bridge}]},
+      {matcher:"Bash", hooks:[{type:"command", command:$gate, timeout:660}]}
     ]) | dedupe_keep_order)
 ' "$SETTINGS" > "$tmp_settings"
 mv "$tmp_settings" "$SETTINGS"
 chmod 600 "$SETTINGS"
-log "merged PreToolUse[Bash] roborev bridge into $SETTINGS"
+log "merged PreToolUse[Bash] roborev bridge + pre-push gate into $SETTINGS"
 
 log "seed-roborev install complete — run ref/verify.sh to confirm."
