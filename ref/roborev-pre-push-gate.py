@@ -145,8 +145,23 @@ def _format_block(jobs: list[dict]) -> str:
         lines.append(f"  - review {ref} (FAIL)")
     lines += [
         "",
-        "For each: run `roborev show <id>` to see the findings, then either fix "
-        "them in a new commit or `roborev close <id>` to acknowledge/defer. "
+        "Resolve each before re-pushing — the goal is to CLEAR every open "
+        "fail-verdict review by fixing or declining it, with judgment per "
+        "finding, not to push over them:",
+        "  1. `roborev show <id>` — read the findings.",
+        "  2. VALID finding: fix it in a new commit, then `roborev close <id>` "
+        "(the fix is covered by the new commit's own review; the old review "
+        "stays open until you close it).",
+        "  3. INVALID / YAGNI finding (a guard, edge-case branch, fallback, or "
+        "abstraction not warranted at the current operating point): decline it — "
+        "`roborev comment <id> -m \"<why declined>\"` to record the reason, then "
+        "`roborev close <id>`.",
+        "",
+        "Do NOT clear these with `roborev refine` or `roborev fix`: they "
+        "autonomously apply every finding WITHOUT the valid-vs-YAGNI judgment in "
+        "steps 2–3 (so they accrete defensive cruft), and `refine` runs in a git "
+        "worktree. Resolve each review by hand.",
+        "",
         "Re-run the push once no open fail-verdict reviews remain.",
     ]
     return "\n".join(lines)
