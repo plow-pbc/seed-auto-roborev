@@ -6,8 +6,7 @@
 # a real installed daemon + global hooks and only runs on a host that has
 # actually run the SEED install.
 
-# Run the unit suites (foreground, fail-loud): Claude bridge, pre-push gate, shared hook lib.
+# Run the unit suites (foreground, fail-loud): Claude bridge, pre-push gate.
 test:
     ./ref/test-bridge.sh
     ./ref/test-gate.sh
-    ./ref/test-hooklib.sh

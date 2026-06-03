@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Deterministic implementation of SEED.md ## Verify for seed-roborev (v5).
+# Deterministic implementation of SEED.md ## Verify for seed-roborev (v6).
 # Read-only on installed state, EXCEPT one ephemeral throwaway git repo it
-# creates + two commits in it: a deliberately-broken hello-world (which a
-# claude-code reviewer must flag), then a second commit that proves the
-# resulting open-findings warning surfaces via Option B's always-on pre-commit
-# line. Cleaned up before exit. Fail-loud: any miss → nonzero.
+# creates + a single commit in it: a deliberately-broken hello-world that a
+# claude-code reviewer must flag, proving the review loop end-to-end via the
+# public `roborev list` seam (the post-commit hook is roborev's own, silent
+# one). Cleaned up before exit. Fail-loud: any miss → nonzero.
 set -uo pipefail
 
 HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
@@ -26,8 +26,11 @@ agent="$([ -n "$ROBOREV" ] && "$ROBOREV" config get default_agent 2>/dev/null | 
 [ "$agent" = "claude-code" ] && ok "^v-agent: default_agent=$agent" || bad "^v-agent: default_agent='$agent' (expected claude-code)"
 hp="$(git config --global core.hooksPath || true)"
 [ "$hp" = "$HOOKS_DIR" ] && ok "^v-hookspath: core.hooksPath=$HOOKS_DIR" || bad "^v-hookspath: core.hooksPath='$hp' (expected $HOOKS_DIR)"
-[ -x "$HOOKS_DIR/post-commit" ] && ok "^v-postcommit: post-commit executable" || bad "^v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
-[ -x "$HOOKS_DIR/pre-commit" ]  && ok "^v-precommit:  pre-commit executable"  || bad "^v-precommit: $HOOKS_DIR/pre-commit missing or not executable"
+[ -x "$HOOKS_DIR/post-commit" ]  && ok "^v-postcommit: post-commit executable (roborev-owned)"   || bad "^v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
+[ -x "$HOOKS_DIR/post-rewrite" ] && ok "^v-postrewrite: post-rewrite executable (roborev-owned)" || bad "^v-postrewrite: $HOOKS_DIR/post-rewrite missing or not executable"
+# No orphaned wrappers from a prior seed version (the installer removes them).
+[ ! -e "$HOOKS_DIR/pre-commit" ]         && ok "^v-nostale[pre-commit]: no orphaned seed pre-commit wrapper" || bad "^v-nostale[pre-commit]: stale $HOOKS_DIR/pre-commit from a prior seed — re-run install.sh"
+[ ! -e "$HOOKS_DIR/roborev-hooklib.sh" ] && ok "^v-nostale[hooklib]: no orphaned roborev-hooklib.sh"        || bad "^v-nostale[hooklib]: stale $HOOKS_DIR/roborev-hooklib.sh from a prior seed — re-run install.sh"
 
 # --- ^v-bridge — Claude Code context bridge (seed-owned PreToolUse[Bash]) -----
 BRIDGE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py"
@@ -79,8 +82,8 @@ rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
-# wait for review → second commit → confirm the open-findings warning surfaced.
-# Requires all static checks above to have passed.
+# wait for review → confirm the open fail-verdict finding surfaces via
+# `roborev list`. Requires all static checks above to have passed.
 if [ "$fails" -ne 0 ] || [ -z "$ROBOREV" ]; then
   bad "^v-loop: skipped — preconditions failed above"
   printf '\n%d check(s) FAILED\n' "$fails" >&2; exit 1
@@ -110,29 +113,17 @@ os.system(f"echo Hello, {name}, key={API_KEY}")             # injection
 print("Hello, " + 42)                                       # crashes
 PY
 git add app.py
-
-c1err="$tmp/commit1.stderr"
-git commit -q -m "seed-verify broken hello world" 2>"$c1err"
+git commit -q -m "seed-verify broken hello world"
 sha1=$(git rev-parse --short HEAD)
 
-# ^v-loop[option-b-clean]: pre-commit ran BEFORE this commit on the empty
-# branch (no findings yet) and should have printed the "0 open findings ✓" line.
-grep -q "0 open findings" "$c1err" && ok "^v-loop[option-b-clean]: pre-commit announced clean (0 findings) on first commit" \
-  || bad "^v-loop[option-b-clean]: pre-commit did NOT print 'roborev: 0 open findings' before first commit (Option B)"
-
-# ^v-loop[option-a]: post-commit ran AFTER this commit and should have printed
-# the "enqueued review for $sha (claude-code)" line.
-grep -qE "enqueued review for $sha1 .*claude-code" "$c1err" && ok "^v-loop[option-a]: post-commit announced enqueue for $sha1 (claude-code)" \
-  || bad "^v-loop[option-a]: post-commit did NOT print 'enqueued review for $sha1 (claude-code)' (Option A)"
-
-# ^v-loop[enqueued]: the job actually appeared in roborev's queue for this repo
+# ^v-loop[enqueued]: roborev's post-commit hook enqueued a review for this repo.
 jobs_json="$("$ROBOREV" list --repo "$tmp" --json 2>/dev/null || echo '[]')"
 job_id=$(printf '%s' "$jobs_json" | jq '.[0].id // empty' 2>/dev/null)
 job_agent=$(printf '%s' "$jobs_json" | jq -r '.[0].agent // "?"' 2>/dev/null)
 if [ -n "$job_id" ]; then
-  ok "^v-loop[enqueued]: job=$job_id agent=$job_agent"
+  ok "^v-loop[enqueued]: post-commit enqueued job=$job_id agent=$job_agent for $sha1"
 else
-  bad "^v-loop[enqueued]: NO job found for the broken-hello-world commit"
+  bad "^v-loop[enqueued]: NO job enqueued for the broken-hello-world commit (post-commit hook fired?)"
 fi
 
 # ^v-loop[complete]: poll up to 4 minutes for the review to reach a terminal
@@ -154,7 +145,7 @@ esac
 # real failure of the loop's value, not just the test.
 if [ -n "$status" ]; then
   # Count only OPEN FAIL-verdict reviews — the SAME `verdict=="F" && !closed`
-  # contract the bridge + pre-commit hook use (`--open` includes PASS rows, which
+  # contract the bridge + pre-push gate use (`--open` includes PASS rows, which
   # are not findings). Counting raw rows would let a PASS-only review satisfy the
   # loop's "the reviewer flagged the broken code" assertion.
   open_now=$("$ROBOREV" list --repo "$tmp" --open --json 2>/dev/null | jq '[.[] | select(.verdict=="F" and (.closed | not))] | length' 2>/dev/null || echo 0)
@@ -164,25 +155,6 @@ if [ -n "$status" ]; then
     bad "^v-loop[findings]: claude-code reviewed but found 0 open findings on intentionally-broken code (review job $job_id — 'roborev show $job_id' for the verdict)"
   fi
 fi
-
-# ^v-loop[blocking]: make a second commit and confirm Option B surfaces the
-# now-open findings via pre-commit, BEFORE the commit finalizes.
-echo "second change" >> app.py
-git add app.py
-c2err="$tmp/commit2.stderr"
-git commit -q -m "seed-verify second commit" 2>"$c2err"
-sha2=$(git rev-parse --short HEAD)
-
-if grep -q "open review finding" "$c2err"; then
-  ok "^v-loop[blocking]: pre-commit surfaced the open finding(s) before the second commit (Option B)"
-else
-  bad "^v-loop[blocking]: pre-commit did NOT surface open findings before the second commit (Option B fail)"
-fi
-
-# ^v-loop[option-a-second]: confirm Option A also fires on this second commit.
-grep -qE "enqueued review for $sha2" "$c2err" \
-  && ok "^v-loop[option-a-second]: post-commit announced enqueue for $sha2" \
-  || bad "^v-loop[option-a-second]: post-commit silent on second commit (Option A regression)"
 
 [ "$fails" -eq 0 ] || { printf '\n%d check(s) FAILED\n' "$fails" >&2; exit 1; }
 printf '\nseed-roborev: all checks passed (full loop validated end-to-end)\n'

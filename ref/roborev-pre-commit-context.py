@@ -15,8 +15,8 @@ warning: the seed installs roborev alongside this bridge, so a missing binary
 means a broken install and commits aren't being reviewed. It WARNS, never
 denies — this is a dev-tool convenience on machines the operator controls, not
 a security gate (a deny is a bypassable speed bump anyway). The agent reads the
-warning, re-runs the installer, and continues. The agent-agnostic git
-pre-commit hook + verify.sh own the loud, everyone-covered failure.
+warning, re-runs the installer, and continues. `verify.sh` is the on-demand,
+everyone-covered check for a broken install.
 
 Triggers when the Bash command is `git commit` OR `git -C <dir> commit` (used by
 the `/cleanup` skill committing into a sibling checkout), including
