@@ -87,16 +87,28 @@ SECRET_PATTERNS = (
     re.compile(r"\b(xox[abporst]-[A-Za-z0-9-]{10,})\b"),          # Slack
     re.compile(r"\b((?:AKIA|ASIA)[A-Z0-9]{16,})\b"),             # AWS access key IDs (AKIA/ASIA)
     re.compile(r"\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b"),  # JWT (header.payload.sig, header always starts eyJ for JSON `{"...`)
-    re.compile(r"(-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----)"),     # PEM private keys
+)
+# PEM private keys span MULTIPLE lines: the BEGIN line, the base64 key body,
+# then the END line. Match the WHOLE block (re.DOTALL so `.` crosses newlines)
+# and replace it wholesale — matching only the BEGIN line would leak the base64
+# body. _redact_secrets must therefore run on the full body BEFORE splitlines().
+PEM_BLOCK_PATTERN = re.compile(
+    r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?-----END (?:[A-Z]+ )?PRIVATE KEY-----",
+    re.DOTALL,
 )
 
 
 def _redact_secrets(text: str) -> str:
-    """Mask common token-shaped secrets in `text` to the last-3-chars form
-    `<redacted secret …xY7>`. Best-effort: catches the common prefix-style
-    tokens listed above. Doesn't chase generic high-entropy strings (would
-    false-positive on file hashes, IDs, etc.).
+    """Mask common token-shaped secrets in `text`. Single-line token patterns
+    collapse to the last-3-chars form `<redacted secret …xY7>`; a PEM private-
+    key block (BEGIN…END, possibly multi-line) collapses to a fixed marker.
+    Best-effort: catches the common prefix-style tokens above. Doesn't chase
+    generic high-entropy strings (would false-positive on hashes, IDs, etc.).
+
+    Must be applied to the WHOLE body string (not line-by-line) so the
+    multi-line PEM block can match across newlines.
     """
+    text = PEM_BLOCK_PATTERN.sub("<redacted private key block>", text)
     for pattern in SECRET_PATTERNS:
         text = pattern.sub(lambda m: f"<redacted secret …{m.group(1)[-3:]}>", text)
     return text
@@ -412,18 +424,21 @@ def _format_findings(roborev: str, repo_root: str, branch: str, rows: list[tuple
             body = out.stdout if out.returncode == 0 else ""
         except (subprocess.SubprocessError, OSError):
             body = ""
+        # Redact secrets on the WHOLE body FIRST (before splitlines), so
+        # multi-line patterns — a PEM private-key block spanning BEGIN…END —
+        # can match across newlines; a per-line pass would only catch the
+        # BEGIN line and leak the base64 key body. Review bodies can quote
+        # diffs/fixtures that happen to contain leaked tokens, so this
+        # enforces the CLAUDE.md last-3-chars rule defensively.
+        body = _redact_secrets(body)
         # roborev show prints a 2-line header + separator before the actual
         # review; skip those for brevity. Cap to ~40 lines per finding so a
         # large multi-finding review doesn't dominate the context budget.
-        # Each kept line is run through _redact_secrets to enforce the
-        # CLAUDE.md last-3-chars rule defensively — review bodies can quote
-        # diffs/fixtures that happen to contain leaked tokens.
-        lines = body.splitlines()
         kept = []
-        for ln in lines:
+        for ln in body.splitlines():
             if ln.startswith("Review for job") or ln.startswith("Tokens:") or ln.startswith("----"):
                 continue
-            kept.append(_redact_secrets(ln))
+            kept.append(ln)
             if len(kept) >= 40:
                 kept.append("... (truncated)")
                 break

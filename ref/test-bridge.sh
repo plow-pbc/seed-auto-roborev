@@ -255,6 +255,33 @@ rm -rf "$repo_dir/bin"
 out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git log --grep commit"},"cwd":"%s"}' "$repo_dir" | python3 "$HOOK"); rc=$?
 assert_eq "" "$out" "roborev bridge rejects 'git log --grep commit' (subcommand must be the first non-option token after git)"
 
+# Test (Probe 2): a PEM private-key BLOCK in a review body must be redacted in
+# full — not just the BEGIN line. The bug was: redaction ran per-line AFTER
+# splitlines(), and the PEM pattern matched only the BEGIN line, so the base64
+# key body (subsequent lines) leaked into Claude's context. Drive a commit in
+# its own repo whose open-FAIL review body embeds a full fake PEM block and
+# assert the base64 body lines do NOT appear (and a redaction marker does).
+pem_repo="$tmp/pemrepo"
+git init -q -b feature/x "$pem_repo"
+pem_root=$(git -C "$pem_repo" rev-parse --show-toplevel)
+PEM_REVIEW_BODY='## Review Findings
+- **Problem**: leaked key in a fixture file:
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAfakeBASE64keyBODYline1SHOULDnotLEAK0000000000000000
+line2ALSObase64ishSHOULDnotLEAK111111111111111111111111111111111111
+-----END RSA PRIVATE KEY-----
+## Summary
+Fake review with a PEM block.'
+write_fixture "$pem_root" "$(jq -n --arg body "$PEM_REVIEW_BODY" '[
+  {id:50, git_ref:"pem01234abc", branch:"feature/x", verdict:"F", closed:false, body:$body}
+]')"
+out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"},"cwd":"%s"}' "$pem_repo" | python3 "$HOOK")
+ctx=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "$ctx" "roborev-review-id=50" "PEM scenario surfaces the open fail review"
+assert_not_contains "$ctx" "MIIEpAIBAAKCAQEAfakeBASE64keyBODYline1SHOULDnotLEAK" "PEM base64 body line 1 is NOT leaked into context"
+assert_not_contains "$ctx" "line2ALSObase64ishSHOULDnotLEAK" "PEM base64 body line 2 is NOT leaked into context"
+assert_contains "$ctx" "redacted private key block" "PEM block is replaced by a redaction marker"
+
 # --- NEW: hard-block on missing roborev binary -------------------------------
 # Hard-block: a git-commit payload in a real repo with NO roborev binary
 # reachable must DENY the commit (broken-install signal), not no-op.
