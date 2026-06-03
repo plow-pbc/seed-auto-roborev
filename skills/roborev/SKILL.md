@@ -34,7 +34,7 @@ Clearing roborev before push means each later PR-review round (knightwatch) is w
 | Command | What it does |
 |---|---|
 | `roborev status` | Daemon health + queue depth. |
-| `roborev list --open` | Open (unresolved) findings for the current repo+branch. Add `--json` to parse. |
+| `roborev list --open` | Unresolved *reviews* for the repo+branch — **any** verdict, including PASS rows, so not all of them are findings. The **actionable** ones are unclosed fail-verdict reviews (`verdict=F`) — what the bridge and gate act on. Add `--json` and filter `verdict=="F"` to list just those. |
 | `roborev show <id>` | Read a specific finding (job ID, or a commit SHA / `HEAD`). |
 | `roborev wait` | Block until HEAD's review lands — token-efficient; use this instead of polling before a push. |
 | `roborev close <id>` | Mark a finding resolved/declined. |
