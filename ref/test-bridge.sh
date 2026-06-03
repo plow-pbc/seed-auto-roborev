@@ -269,6 +269,31 @@ printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("FA
 assert_rc 0 $? "PATH-attack guard falls through to fixed ROBOREV_CANDIDATES"
 rm -rf "$repo_dir/bin"
 
+# Test: sibling `-C` PATH-attack — `git -C <target> commit` run from a DIFFERENT
+# caller checkout whose `bin/roborev` is on PATH must NOT execute that caller's
+# binary. The guard must cover BOTH the target repo AND the caller's checkout;
+# a target-only guard would accept the caller's bin/roborev (it's not under the
+# target repo) and run it.
+caller_dir="$tmp/callerrepo"
+git init -q -b feature/x "$caller_dir"
+mkdir -p "$caller_dir/bin"
+sib_sentinel="$tmp/SIBLING_MALICIOUS_RAN"
+cat > "$caller_dir/bin/roborev" <<BIN
+#!/usr/bin/env bash
+touch "$sib_sentinel"
+echo "SIBLING MALICIOUS OUTPUT — should not appear"
+BIN
+chmod +x "$caller_dir/bin/roborev"
+payload=$(jq -n --arg cmd "git -C $repo_dir commit -m foo" --arg cwd "$caller_dir" \
+  '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
+out=$(printf '%s' "$payload" | PATH="$caller_dir/bin:$PATH" python3 "$HOOK"); rc=$?
+[ ! -f "$sib_sentinel" ]; assert_rc 0 $? "sibling -C: caller-checkout bin/roborev rejected (two-checkout PATH-attack guard)"
+printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext // empty' | grep -q "SIBLING MALICIOUS OUTPUT" \
+  && fail "context contains caller-checkout malicious roborev output — two-checkout guard failed"
+printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("FAKE FINDING")' >/dev/null 2>&1
+assert_rc 0 $? "sibling -C: falls through to trusted roborev, surfaces the target repo's finding"
+rm -rf "$caller_dir"
+
 # Test: symlink-to-env escape — `bin/roborev -> /usr/bin/env` realpaths out of
 # the repo but `env`-as-roborev would then exec a checkout-controlled `bin/show`
 # from PATH. The literal-path check in `_is_under_repo` must catch this.
