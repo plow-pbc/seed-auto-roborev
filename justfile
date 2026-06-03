@@ -1,4 +1,4 @@
-# seed-roborev — task runner.
+# seed-auto-roborev — task runner.
 #
 # `just test` is the merge gate (claude-config's `just test` convention).
 # It runs the standalone unit suites, which mock roborev + $HOME and need no

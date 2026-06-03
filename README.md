@@ -15,13 +15,13 @@ Before `git commit`, a **context bridge** injects open fail-verdict findings for
 
 Claude Code also gets a **pre-push gate** (`roborev-pre-push-gate.py`, same seed-owned path): where the bridge only *warns* before a commit, the gate **denies** a `git push` while the branch has open fail-verdict reviews — after waiting up to 600s for in-flight reviews to land. Commit is too frequent to block, so it warns; push is the export boundary, so it gates — the forcing function that stops findings piling up unseen. Both hooks share one `_roborev_hooklib.py`, so they agree on what an "outstanding finding" is. It's Claude-only and bypassable on a box you control — a workflow forcing function against silently pushing over a `verdict=F` you never read, not a security boundary.
 
-Finally, the SEED installs a **`roborev` usage skill** to `~/.claude/skills/roborev/SKILL.md`. The hooks bring findings *to* the agent; the skill teaches the agent how to *use* roborev and the workflow contract those hooks serve — let in-flight reviews finish before push, fix valid findings or `roborev close` declined ones with a reason, never push over an unread `verdict=F` — plus the command reference (`status`/`list`/`show`/`wait`/`close`) and two sharp edges (the daemon unit is `roborev-daemon.service`, not `roborev`; run `roborev close <id>` standalone before `git commit`). It auto-activates on commit/push and lands as a real file, so a config repo that symlink-manages its own skills leaves it intact. The gate *forces* the behavior; the skill *teaches* it, so the contract holds even where the gate is absent or bypassed.
+Finally, the SEED installs a **`roborev` usage skill** to `~/.claude/skills/roborev/SKILL.md` — the agent-facing complement to the hooks. The hooks bring findings *to* the agent; the skill teaches it how to *use* roborev and the review-loop contract (the gate *forces* the behavior, the skill *teaches* it, so it holds even where the gate is absent). It auto-activates on commit/push and lands as a real file, so a config repo that symlink-manages its own skills leaves it intact. The full contract, command reference, and operational sharp edges live in [`skills/roborev/SKILL.md`](skills/roborev/SKILL.md) — the single source of truth, not duplicated here.
 
 ## Install
 
 If your agent has the `seed-install` skill:
 
-> Install `git@github.com:plow-pbc/seed-roborev.git`
+> Install `git@github.com:plow-pbc/seed-auto-roborev.git`
 
 The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies` install steps (announcing each shell block first), then answers the `## Verify` prompts. CI / non-AI callers can run the deterministic equivalents at [`ref/install.sh`](ref/install.sh) and [`ref/verify.sh`](ref/verify.sh).
 
@@ -31,7 +31,7 @@ The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies
 
 ```bash
 # build/obtain the binary for the platform, then:
-gh release upload v0.1 path/to/roborev#roborev-linux-aarch64 -R plow-pbc/seed-roborev
+gh release upload v0.1 path/to/roborev#roborev-linux-aarch64 -R plow-pbc/seed-auto-roborev
 ```
 
 After upload, `install.sh` on that platform succeeds without manual prep. Until then it fails loud with the exact upload command.

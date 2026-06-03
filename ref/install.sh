@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic implementation of SEED.md ## Dependencies for seed-roborev (v3).
+# Deterministic implementation of SEED.md ## Dependencies for seed-auto-roborev (v3).
 # Idempotent + fail-loud. Wires always-on roborev on this machine. roborev owns
 # its own git hooks (`post-commit` enqueues a review every commit, `post-rewrite`
 # remaps on rebase/amend) via `roborev install-hook --force`. This SEED sets up
@@ -25,7 +25,7 @@ fi
 
 # --- 1b. roborev binary — auto-fetch from this SEED's GitHub release ---------
 # Truly one-shot: install.sh downloads the platform-tagged binary from
-#   https://github.com/plow-pbc/seed-roborev/releases/latest/download/roborev-<os>-<arch>
+#   https://github.com/plow-pbc/seed-auto-roborev/releases/latest/download/roborev-<os>-<arch>
 # To support a new platform: build roborev for it and upload the binary with
 # that asset name (see README "Adding a platform").
 ROBOREV="$(command -v roborev || true)"
@@ -38,7 +38,7 @@ if [ -z "$ROBOREV" ]; then
     Darwin-x86_64)  asset="roborev-darwin-x86_64" ;;
     *) fail "unsupported OS/arch for auto-install: $(uname -s)-$(uname -m)" ;;
   esac
-  url="https://github.com/plow-pbc/seed-roborev/releases/latest/download/$asset"
+  url="https://github.com/plow-pbc/seed-auto-roborev/releases/latest/download/$asset"
   mkdir -p "$HOME/.local/bin"
   log "fetching $asset from $url"
   if curl -fsSL "$url" -o "$HOME/.local/bin/roborev.tmp"; then
@@ -47,7 +47,7 @@ if [ -z "$ROBOREV" ]; then
     ROBOREV="$HOME/.local/bin/roborev"
   else
     rm -f "$HOME/.local/bin/roborev.tmp"
-    fail "could not fetch $asset (no binary published for $(uname -s)-$(uname -m) yet). To enable: build roborev for this platform and 'gh release upload v0.1 <path>#$asset -R plow-pbc/seed-roborev', then re-run."
+    fail "could not fetch $asset (no binary published for $(uname -s)-$(uname -m) yet). To enable: build roborev for this platform and 'gh release upload v0.1 <path>#$asset -R plow-pbc/seed-auto-roborev', then re-run."
   fi
 fi
 log "roborev: $ROBOREV"
