@@ -17,15 +17,24 @@ GOOD_SHA="e4af0de02926cf0d3fc38176bfc096dbef90807418274655507440b3945f1184"
 
 # Build a hermetic sandbox: temp HOME + a stub bin dir that shadows the fetch
 # surface. $1 is the digest the sha256sum stub will report (good → match, wrong
-# → mismatch). Echoes the sandbox root; caller runs install.sh against it.
+# → mismatch); $2 is the `uname -m` arch (default x86_64). Echoes the sandbox
+# root; caller runs install.sh against it.
 make_sandbox() {
-  local reported_sha="$1" root stub
+  local reported_sha="$1" arch="${2:-x86_64}" root stub
   root="$(mktemp -d)"; stub="$root/bin"
   mkdir -p "$stub" "$root/home/.local/bin"
   # claude already present → install.sh §1a skips the `curl | bash` bootstrap.
   printf '#!/bin/sh\nexit 0\n' > "$root/home/.local/bin/claude"; chmod +x "$root/home/.local/bin/claude"
-  # uname → Linux/x86_64 so the tested arm + URL are host-independent.
-  printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; *) echo Linux;; esac\n' > "$stub/uname"
+  # §3+ (daemon, install-hook) talks to the real per-user service managers and
+  # escapes the $HOME sandbox. The success case dies at §2 (running the junk
+  # binary) before reaching them, but that's an incidental invariant — shadow
+  # the managers with no-op stubs so the run stays hermetic even if a future
+  # change let §2 pass (e.g. a maintainer making the stub bytes exec-able).
+  for c in systemctl launchctl pkill loginctl sleep; do
+    printf '#!/bin/sh\nexit 0\n' > "$stub/$c"
+  done
+  # uname → Linux/<arch> so the tested arm + URL are host-independent.
+  printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo %s;; *) echo Linux;; esac\n' "$arch" > "$stub/uname"
   # curl → log the requested URL, write junk bytes to the -o target (the gate
   # compares digests, not real machine code, so the bytes are irrelevant).
   cat > "$stub/curl" <<CURL
@@ -39,7 +48,7 @@ CURL
   # sha256sum → report the configured digest in `<digest>  <file>` form, so
   # install.sh's sha256() (which cuts field 1) sees exactly what we want.
   printf '#!/bin/sh\necho "%s  $1"\n' "$reported_sha" > "$stub/sha256sum"
-  chmod +x "$stub/uname" "$stub/curl" "$stub/sha256sum"
+  chmod +x "$stub"/*
   printf '%s' "$root"
 }
 
@@ -65,6 +74,16 @@ root="$(make_sandbox "$GOOD_SHA")"
 run_install "$root"
 assert_eq "1" "$([ -x "$root/home/.local/bin/roborev" ] && echo 1 || echo 0)" "matching digest installs an executable binary"
 assert_eq "0" "$([ -e "$root/home/.local/bin/roborev.tmp" ] && echo 1 || echo 0)" "temp download cleaned up on success"
+rm -rf "$root"
+
+# --- Case 3: unsupported arch → fail-closed (no pinned checksum) ---------------
+# Hits install.sh's `*)` arm before any fetch — must stop without touching curl
+# or installing anything.
+root="$(make_sandbox "$GOOD_SHA" riscv64)"
+run_install "$root"
+assert_eq "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)" "unsupported arch exits nonzero"
+assert_eq "0" "$([ -e "$root/curl-urls" ] && echo 1 || echo 0)" "unsupported arch never fetches"
+assert_eq "0" "$([ -e "$root/home/.local/bin/roborev" ] && echo 1 || echo 0)" "unsupported arch installs nothing"
 rm -rf "$root"
 
 assert_summary
