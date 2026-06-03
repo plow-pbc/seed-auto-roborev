@@ -45,4 +45,15 @@ repo2="$tmp/repo2"; mkdir -p "$repo2"; ( cd "$repo2" && git init -q )
 out=$( ( cd "$repo2"; chain_repo_hook pre-commit "/self"; echo CONTINUED ) 2>&1 )
 assert_contains "$out" "CONTINUED" "chain_repo_hook returns when no repo-local hook exists"
 
+# --- chain_repo_hook: recursion guard — repo-local hook IS this wrapper ------
+# When core.hooksPath and a repo-local .git/hooks copy resolve to the same file,
+# the `-ef self` guard must stop the wrapper exec-ing itself into an infinite
+# loop. Pass self = the repo-local hook path and assert it falls through.
+repo3="$tmp/repo3"; mkdir -p "$repo3"; ( cd "$repo3" && git init -q )
+printf '#!/usr/bin/env bash\necho SHOULD_NOT_EXEC\n' > "$repo3/.git/hooks/pre-commit"
+chmod +x "$repo3/.git/hooks/pre-commit"
+out=$( ( cd "$repo3"; chain_repo_hook pre-commit "$repo3/.git/hooks/pre-commit"; echo FELL_THROUGH ) 2>&1 )
+assert_contains "$out" "FELL_THROUGH" "chain_repo_hook recursion guard: does NOT exec when repo-local hook -ef self"
+case "$out" in *SHOULD_NOT_EXEC*) fail "chain_repo_hook exec'd itself — recursion guard broken";; esac
+
 assert_summary

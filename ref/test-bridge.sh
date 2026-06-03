@@ -79,11 +79,11 @@ if [[ "$1" == "list" ]]; then
     esac
   done
   f="$(fixture_for "$repo")"
-  if [[ -f "$f" ]]; then
-    # Honor --branch like the real CLI: a branch-only or branch-ignoring stub
-    # would never catch a regression where the bridge stops scoping by branch.
-    if [[ -n "$branch" ]]; then jq -c --arg b "$branch" '[.[] | select(.branch==$b)]' "$f"; else cat "$f"; fi
-  else echo '[]'; fi
+  # Return the WHOLE fixture array regardless of --branch (the real CLI scopes
+  # server-side, but the bridge ALSO re-filters by branch in Python as
+  # defense-in-depth — so the stub stays branch-blind to prove that Python
+  # filter carries the scoping, not the stub faithfully mimicking the CLI).
+  if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi
   exit 0
 fi
 if [[ "$1" == "show" ]]; then
@@ -310,6 +310,26 @@ ctx=$(run_commit_for_fixture "$(jq -n --arg body "$UNTERM_PEM_BODY" '[
 assert_contains "$ctx" "roborev-review-id=70" "unterminated-PEM scenario surfaces the open fail review"
 assert_not_contains "$ctx" "UNTERMfakeBASE64bodyLINEa_SHOULDnotLEAK" "unterminated PEM (no END): base64 body NOT leaked into context"
 assert_contains "$ctx" "redacted private key block" "unterminated PEM block replaced by the redaction marker"
+
+# Test (cap + sort): more than MAX_REVIEWS (5) open-FAIL reviews must surface
+# only the 5 NEWEST (highest id) AND report the dropped count — never silently
+# truncate. 7 open fails (ids 80-86): assert 82-86 surface, 80/81 don't, and the
+# "showing the 5 newest … other 2" note appears.
+ctx=$(run_commit_for_fixture '[
+  {"id":80,"git_ref":"cap80abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 80"},
+  {"id":81,"git_ref":"cap81abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 81"},
+  {"id":82,"git_ref":"cap82abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 82"},
+  {"id":83,"git_ref":"cap83abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 83"},
+  {"id":84,"git_ref":"cap84abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 84"},
+  {"id":85,"git_ref":"cap85abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 85"},
+  {"id":86,"git_ref":"cap86abcd","branch":"feature/x","verdict":"F","closed":false,"body":"cap finding 86"}
+]')
+assert_contains "$ctx" "roborev-review-id=86" "cap: newest (86) surfaces"
+assert_contains "$ctx" "roborev-review-id=82" "cap: 5th-newest (82) surfaces"
+assert_not_contains "$ctx" "roborev-review-id=81" "cap: 6th-newest (81) dropped by MAX_REVIEWS"
+assert_not_contains "$ctx" "roborev-review-id=80" "cap: oldest (80) dropped by MAX_REVIEWS"
+assert_contains "$ctx" "showing the 5 newest" "cap: header reports the truncation (no silent cap)"
+assert_contains "$ctx" "other 2" "cap: header reports how many were dropped"
 
 # --- missing roborev binary -> loud WARNING into context (never deny) --------
 # A git-commit payload in a real repo with NO roborev binary reachable must

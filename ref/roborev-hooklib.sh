@@ -12,6 +12,10 @@
 
 # Fixed, trusted PATH (mirrors the daemon service's PATH). Exported so the
 # git/jq/head calls in the hook bodies also resolve from trusted dirs only.
+# Save the caller's PATH first so a chained repo-local hook is exec'd with the
+# operator's full environment (nvm/pyenv/venv/asdf shims, …), not this truncated
+# one — sanitizing our own body must not regress an existing repo-local hook.
+ROBOREV_ORIG_PATH="$PATH"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Echo the resolved roborev path (stdout) on success; on a missing binary, print
@@ -34,6 +38,6 @@ chain_repo_hook() {  # chain_repo_hook <hook-name> <self-path> [hook args...]
   git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
   repo_hook="${git_dir:+$git_dir/hooks/$name}"
   if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "$self" ]; then
-    exec "$repo_hook" "$@"
+    PATH="$ROBOREV_ORIG_PATH" exec "$repo_hook" "$@"
   fi
 }

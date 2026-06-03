@@ -264,8 +264,9 @@ def _git_toplevel(cwd: str) -> str:
 
 def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[int, str]]:
     """`[(job_id, short_sha), ...]` for OPEN FAIL-verdict reviews on this
-    repo+branch via the public `roborev list` CLI. Newest-first, capped at
-    MAX_REVIEWS. Any subprocess/JSON error yields `[]` (informational hook)."""
+    repo+branch via the public `roborev list` CLI, newest-first (uncapped — the
+    formatter caps + reports the total). Any subprocess/JSON error yields `[]`
+    (informational hook)."""
     try:
         r = subprocess.run(
             [roborev, "list", "--json", "--repo", repo_root, "--branch", branch],
@@ -281,11 +282,16 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
         # to `[]`, not crash. The `verdict == "F"` predicate is LOAD-BEARING —
         # `roborev list --open` returns PASS verdicts too; dropping it would
         # inject passing reviews into context. `not closed` drops acknowledged
-        # (via `roborev close`) reviews the unfiltered list still includes.
+        # (via `roborev close`) reviews the unfiltered list still includes. The
+        # branch re-check is defense-in-depth: roborev is fetched from a moving
+        # release, so don't trust `--branch` scoping alone — if a row carries a
+        # branch and it doesn't match, drop it (a CLI that omits the field still
+        # works, falling back to the server-side `--branch` filter).
         rows = [
             (int(j["id"]), str(j["git_ref"])[:8])
             for j in jobs
             if isinstance(j, dict) and j.get("verdict") == "F" and not j.get("closed", False)
+            and ("branch" not in j or str(j["branch"]) == branch)
         ]
         # Sort newest-first so the cap keeps the newest findings regardless of
         # the CLI's (unverified) default order.
@@ -293,13 +299,21 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError,
             ValueError, KeyError, TypeError):
         return []
-    return rows[:MAX_REVIEWS]
+    return rows
 
 
 def _format_findings(roborev: str, repo_root: str, branch: str, rows: list[tuple[int, str]]) -> str:
+    total = len(rows)
+    shown = rows[:MAX_REVIEWS]
+    # Never silently truncate — if the cap drops some, say how many so the agent
+    # doesn't read "5 reviews" as "the whole branch is covered".
+    cap_note = (
+        f" — showing the {MAX_REVIEWS} newest; run `roborev list` for the other {total - MAX_REVIEWS}"
+        if total > MAX_REVIEWS else ""
+    )
     header = (
         f"Open roborev fail-verdict reviews on this branch ({branch!r} in {repo_root}):\n"
-        f"({len(rows)} review{'s' if len(rows) != 1 else ''} from prior commit(s) on this branch — "
+        f"({total} review{'s' if total != 1 else ''} from prior commit(s) on this branch{cap_note} — "
         f"the daemon's findings haven't been addressed or explicitly closed.)\n\n"
         "For each: either fix it in this commit, defer (commit anyway), or close "
         "as acknowledged with `roborev close <id>`. The hook does NOT block this "
@@ -307,7 +321,7 @@ def _format_findings(roborev: str, repo_root: str, branch: str, rows: list[tuple
         f"{UNTRUSTED_DATA_WARNING}\n"
     )
     sections = [header]
-    for jid, sha in rows:
+    for jid, sha in shown:
         sections.append(f"\n<<<begin-roborev-review-id={jid} sha={sha}>>>")
         try:
             out = subprocess.run(

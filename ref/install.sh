@@ -158,7 +158,7 @@ install -m 0644 "$SEED_REPO/ref/roborev-hooklib.sh" "$HOOKS_DIR/roborev-hooklib.
 # chain to any repo-local post-commit. Replaces roborev's silent stock hook.
 cat > "$HOOKS_DIR/post-commit" <<'HOOK'
 #!/usr/bin/env bash
-. "$(dirname "${BASH_SOURCE[0]}")/roborev-hooklib.sh"
+. "${BASH_SOURCE[0]%/*}/roborev-hooklib.sh"
 if roborev="$(roborev_or_warn)"; then
   sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
   if "$roborev" post-commit >/dev/null 2>&1; then
@@ -178,7 +178,7 @@ chmod +x "$HOOKS_DIR/post-commit"
 # checking on every commit. Warn-only, never blocks. Chains to repo-local hook.
 cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
-. "$(dirname "${BASH_SOURCE[0]}")/roborev-hooklib.sh"
+. "${BASH_SOURCE[0]%/*}/roborev-hooklib.sh"
 if roborev="$(roborev_or_warn)"; then
   n="$("$roborev" list --open --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
   if [ "${n:-0}" -gt 0 ]; then
@@ -211,10 +211,6 @@ log "installed Claude bridge -> $BRIDGE_DIR/roborev-pre-commit-context.py"
 
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
-# If settings.json is a symlink (e.g. managed from a dotfiles repo), resolve to
-# the real file so the atomic mv updates it in place instead of replacing the
-# symlink with a regular file and orphaning the link.
-[ -L "$SETTINGS" ] && SETTINGS="$(readlink -f "$SETTINGS")"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 command -v jq >/dev/null || fail "jq required to merge the Claude bridge into $SETTINGS"
 bridge_cmd="$BRIDGE_DIR/roborev-pre-commit-context.py"
@@ -228,7 +224,11 @@ jq --arg cmd "$bridge_cmd" '
       {matcher:"Bash", hooks:[{type:"command", command:$cmd}]}
     ]) | dedupe_keep_order)
 ' "$SETTINGS" > "$tmp_settings"
-mv "$tmp_settings" "$SETTINGS"
+# Write THROUGH a possibly-symlinked settings.json — the `>` redirect follows
+# the symlink and updates its target, so a dotfiles-managed link isn't severed
+# (which an `mv` would do). Portable: no GNU-only `readlink -f` (BSD/macOS lacks it).
+cat "$tmp_settings" > "$SETTINGS"
+rm -f "$tmp_settings"
 chmod 600 "$SETTINGS"
 log "merged PreToolUse[Bash] roborev bridge into $SETTINGS"
 
