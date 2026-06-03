@@ -187,6 +187,15 @@ is_deny "$out"; assert_rc 0 $? "gate fail-closed DENIES when roborev list fails 
 reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 assert_contains "$reason" "roborev status" "list-failure deny points at roborev status"
 
+# `roborev list` returns JSON `null` (rc 0), NOT `[]`, for a repo+branch it has
+# never reviewed (fresh/cloned repo, brand-new branch). That is empty, not a read
+# failure — the gate must ALLOW, else it blocks every push in an untracked repo.
+# (Distinct from the listfail case above: rc 0 + parseable, just no jobs.)
+root=$(new_repo 'null')
+out=$(run_push "$root"); rc=$?
+assert_rc 0 "$rc" "gate exits 0 (no crash) when roborev list returns JSON null"
+assert_eq "" "$out" "gate ALLOWS a push when roborev list returns JSON null (never-reviewed repo, not a failure)"
+
 # --- status vocabulary: in-flight is a denylist of terminal states -----------
 # An UNRECOGNIZED non-terminal status (outside {queued,running}) must be treated
 # as in-flight (fail-closed), NOT silently allowed through. With the old

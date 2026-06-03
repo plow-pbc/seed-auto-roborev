@@ -189,12 +189,20 @@ def _list_jobs(roborev: str, repo_root: str, branch: str) -> list[dict] | None:
     rather than re-implementing branch comparison client-side.
 
     Returns `None` on ANY failure (subprocess/OS error, nonzero exit, JSON error,
-    non-list shape) — DISTINCT from `[]`, a cleanly-parsed empty list. The
-    distinction is load-bearing for the fail-closed push gate: it DENIES on
-    `None` (couldn't determine review state) instead of mistaking a wedged daemon
-    or timed-out `list` for "no findings" and waving an unreviewed push through.
-    The warn-only commit bridge maps `None`→`[]` (under-reporting a non-blocking
-    warning is benign). Mirrors the empty-vs-broken handling the git hooks use."""
+    unexpected non-list shape) — DISTINCT from `[]`, a cleanly-parsed empty
+    result. The distinction is load-bearing for the fail-closed push gate: it
+    DENIES on `None` (couldn't determine review state) instead of mistaking a
+    wedged daemon or timed-out `list` for "no findings" and waving an unreviewed
+    push through. The warn-only commit bridge maps `None`→`[]` (under-reporting a
+    non-blocking warning is benign). Mirrors the empty-vs-broken handling the git
+    hooks use.
+
+    A cleanly-parsed JSON `null` (rc 0) means "no jobs for this repo+branch" — it
+    is what `roborev list` prints for a repo/branch it has never reviewed (a fresh
+    or freshly-cloned repo, a brand-new branch). That is empty, NOT a read
+    failure, so it maps to `[]` — otherwise the gate would deny every push in any
+    repo roborev hasn't reviewed yet (the daemon is fine; there's simply nothing
+    to find)."""
     try:
         r = subprocess.run(
             [roborev, "list", "--json", "--repo", repo_root, "--branch", branch],
@@ -208,4 +216,6 @@ def _list_jobs(roborev: str, repo_root: str, branch: str) -> list[dict] | None:
         data = json.loads(r.stdout)
     except (json.JSONDecodeError, ValueError):
         return None
+    if data is None:        # roborev prints JSON `null`, not `[]`, for a never-
+        return []           # reviewed repo+branch — a clean "no jobs", not a fault.
     return data if isinstance(data, list) else None
