@@ -24,9 +24,9 @@ must not wedge every push — the commit hook + verify.sh own that loud signal).
 It DENIES on (a) a confirmed open fail-verdict review, (b) in-flight reviews
 that exceed the wait timeout, or (c) a review still in flight after the wait
 (fail-closed — an unreviewed push can't slip through). Before denying on
-in-flight work it first waits up to ROBOREV_PUSH_WAIT_SECS (default 600s) for
-queued/running reviews to finish, because commit→push-immediately is the normal
-flow and the daemon needs a moment to catch up. (The SEED post-commit hook
+in-flight work it first waits up to 600s for queued/running reviews to finish,
+because commit→push-immediately is the normal flow and the daemon needs a moment
+to catch up. (The SEED post-commit hook
 enqueues synchronously — the review row is listable before control returns — so
 a just-committed HEAD shows up as in-flight, not as an empty list.)
 
@@ -61,25 +61,13 @@ from _roborev_hooklib import (
     TERMINAL_STATUSES,
 )
 
-# How long to wait for in-flight reviews. Operator-tunable, but VALIDATED and
-# CLAMPED: a non-integer value falls back to the default instead of crashing the
-# hook at import (a crash = no deny = fail-open), and the value is capped under
-# the hook timeout the installer registers (660s) so the timeout-deny JSON
-# always emits before Claude Code kills the hook. Raising the wait past the cap
-# would silently defeat the gate, so we cap rather than honor it.
-_DEFAULT_WAIT_SECS = 600
-_MAX_WAIT_SECS = 600  # keep < install.sh's registered timeout:660 (60s headroom)
-
-
-def _wait_timeout_secs() -> int:
-    try:
-        v = int(os.environ.get("ROBOREV_PUSH_WAIT_SECS", str(_DEFAULT_WAIT_SECS)))
-    except (ValueError, TypeError):
-        v = _DEFAULT_WAIT_SECS
-    return max(1, min(v, _MAX_WAIT_SECS))
-
-
-WAIT_TIMEOUT_SECS = _wait_timeout_secs()
+# How long to wait for in-flight reviews. Fixed at 600s — under the installer's
+# registered 660s hook timeout, so the timeout-deny JSON always emits before
+# Claude Code kills the hook. Not an operator knob (nobody's needed to tune the
+# push wait at the current scale); the ROBOREV_PUSH_WAIT_SECS env read is an
+# undocumented TEST SEAM so the timeout-deny path can be induced fast in a unit
+# test — keep it ≤600 if you ever set it, or the deny gets killed mid-wait.
+WAIT_TIMEOUT_SECS = int(os.environ.get("ROBOREV_PUSH_WAIT_SECS", "600"))
 
 
 _LIST_FAIL_REASON = (

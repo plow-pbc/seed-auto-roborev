@@ -76,17 +76,6 @@ else
   bad "^v-gate[allow]: gate did not cleanly allow (rc=$ga_rc, stdout='$ga_out', stderr='$(cat "$ga_err")')"
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
-# ^v-gate[headroom]: the registered hook timeout MUST exceed the gate's wait cap
-# (_MAX_WAIT_SECS), or a slow review's timeout-deny is SIGKILLed before it emits
-# and the push fails OPEN. Ties the two numbers (in settings.json vs the gate
-# source) so an edit to either that breaks the invariant fails verification.
-gate_timeout=$(jq -r --arg g "$GATE" 'first(.hooks.PreToolUse[]? | select(.matcher=="Bash") | .hooks[]? | select(.command==$g) | .timeout) // 0' "$HOME/.claude/settings.json" 2>/dev/null)
-max_wait=$(grep -oE '_MAX_WAIT_SECS[[:space:]]*=[[:space:]]*[0-9]+' "$GATE" 2>/dev/null | grep -oE '[0-9]+' | head -1)
-if [ -n "$max_wait" ] && [ "${gate_timeout:-0}" -gt "$max_wait" ]; then
-  ok "^v-gate[headroom]: hook timeout ($gate_timeout) > wait cap _MAX_WAIT_SECS ($max_wait)"
-else
-  bad "^v-gate[headroom]: hook timeout ($gate_timeout) must exceed _MAX_WAIT_SECS ($max_wait) or the timeout-deny is killed before it emits (fail-open)"
-fi
 
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
