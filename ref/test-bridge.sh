@@ -201,6 +201,31 @@ out=$(printf '%s' "$payload" | python3 "$HOOK"); rc=$?
 printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("roborev-review-id=42")' >/dev/null 2>&1
 assert_rc 0 $? "roborev bridge ignores -C tokens after the commit subcommand"
 
+# Test: quoted shell operators inside the commit MESSAGE must NOT tear the
+# `git commit` segment apart. `git commit -m "x && y"` (and ; and | variants)
+# previously regex-split inside the quoted `-m` arg, broke shlex on the
+# unbalanced quote, and silently bypassed the hook. The finding must still
+# surface for each operator.
+for msg_op in "&&" ";" "|"; do
+  payload=$(jq -n --arg cmd "git commit -m \"x $msg_op y\"" --arg cwd "$repo_dir" \
+    '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
+  out=$(printf '%s' "$payload" | python3 "$HOOK")
+  printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("roborev-review-id=42")' >/dev/null 2>&1
+  assert_rc 0 $? "quoted '$msg_op' in commit message still surfaces the open fail (quote-aware segmentation)"
+done
+
+# Test: hard-block deny path is NOT bypassed by a quoted operator in the message.
+# With no roborev binary, `git commit -m "a && b"` must still DENY — the prior
+# regex pre-split returned None before _find_roborev, silently skipping the deny.
+qb_home="$(mktemp -d)"; qb_repo="$(mktemp -d)"
+( cd "$qb_repo" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
+qb_out=$(printf '%s' "$(jq -n --arg cmd 'git commit -m "a && b"' --arg cwd "$qb_repo" \
+  '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')" \
+  | HOME="$qb_home" PATH="/usr/bin:/bin" "$HOOK")
+printf '%s' "$qb_out" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1
+assert_rc 0 $? "hard-block: quoted operator in commit message does NOT bypass the missing-roborev deny"
+rm -rf "$qb_home" "$qb_repo"
+
 # Test: PATH-attack guard — a repo-controlled `bin/roborev` script must NOT be
 # executed by the hook. Stand up a hostile roborev INSIDE $repo_dir, put it
 # first on PATH, then drive a commit. The hook should reject the in-repo path

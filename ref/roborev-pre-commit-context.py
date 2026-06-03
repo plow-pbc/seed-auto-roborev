@@ -184,6 +184,38 @@ def main() -> int:
     return 0
 
 
+_OPERATOR_TOKENS = {"&&", "||", "|", ";", "&"}
+
+
+def _split_into_segments(cmd: str) -> list[list[str]]:
+    """Tokenize `cmd` once (quote-aware) and split the token stream on shell
+    operator tokens (`&&`, `||`, `|`, `;`, `&`) into per-segment token lists.
+
+    Uses `shlex(..., punctuation_chars=True)`, which groups runs of `&|;`
+    into their own standalone tokens while leaving quoted argument strings
+    (`-m "x && y"`) intact — so an operator *inside* a quoted commit message
+    is preserved as part of the argument and never splits a segment. Returns
+    `[]` on a tokenizer error (unbalanced quote in the raw command, etc.),
+    which fails closed to "no git-commit segment" in the caller.
+    """
+    try:
+        lexer = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for tok in tokens:
+        if tok in _OPERATOR_TOKENS:
+            segments.append(current)
+            current = []
+        else:
+            current.append(tok)
+    segments.append(current)
+    return segments
+
+
 def _resolve_repo_cwd(cmd: str, fallback_cwd: str) -> str | None:
     """Validate that `cmd` contains a real `git ... commit ...` invocation
     and return the cwd it operates on. Returns None if there's no valid
@@ -204,19 +236,18 @@ def _resolve_repo_cwd(cmd: str, fallback_cwd: str) -> str | None:
     `commit` wins (matches git's own semantics for repeated -C: each
     is resolved relative to the previous).
     """
-    # Split on shell separators (;, &&, ||, |) to isolate candidate
-    # segments. Conservative split — anything more clever (quoted
-    # operators, here-strings, subshells) just falls through to None.
-    # Validity is decided by shlex + a strict subcommand scan: first
-    # token must be `git`, then after skipping git's global options
-    # the first non-option token must be exactly `commit` (so
-    # `git log --grep commit` doesn't false-positive on the `commit`
-    # word in a flag value).
-    for seg in re.split(r"\s*(?:;|&&|\|\||\|)\s*", cmd):
-        try:
-            tokens = shlex.split(seg, posix=True)
-        except ValueError:
-            continue
+    # Tokenize the WHOLE command ONCE (quote-aware), then split the token
+    # stream on shell-operator tokens (;, &&, ||, |) into candidate segments.
+    # Tokenizing first is what makes this quote-safe: `git commit -m "x && y"`
+    # keeps `x && y` as a single argument token instead of being torn at the
+    # `&&` inside the quotes (the old regex pre-split did the latter, which
+    # broke shlex on the unbalanced quote and silently bypassed the hook —
+    # including the missing-roborev hard-block deny).
+    # Validity per segment is decided by a strict subcommand scan: first token
+    # must be `git`, then after skipping git's global options the first
+    # non-option token must be exactly `commit` (so `git log --grep commit`
+    # doesn't false-positive on the `commit` word in a flag value).
+    for tokens in _split_into_segments(cmd):
         if not tokens or tokens[0] != "git":
             continue
         commit_idx = _find_subcommand_idx(tokens)
