@@ -25,14 +25,6 @@ make_sandbox() {
   mkdir -p "$stub" "$root/home/.local/bin"
   # claude already present → install.sh §1a skips the `curl | bash` bootstrap.
   printf '#!/bin/sh\nexit 0\n' > "$root/home/.local/bin/claude"; chmod +x "$root/home/.local/bin/claude"
-  # §3+ (daemon, install-hook) talks to the real per-user service managers and
-  # escapes the $HOME sandbox. The success case dies at §2 (running the junk
-  # binary) before reaching them, but that's an incidental invariant — shadow
-  # the managers with no-op stubs so the run stays hermetic even if a future
-  # change let §2 pass (e.g. a maintainer making the stub bytes exec-able).
-  for c in systemctl launchctl pkill loginctl sleep; do
-    printf '#!/bin/sh\nexit 0\n' > "$stub/$c"
-  done
   # uname → Linux/<arch> so the tested arm + URL are host-independent.
   printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo %s;; *) echo Linux;; esac\n' "$arch" > "$stub/uname"
   # curl → log the requested URL, write junk bytes to the -o target (the gate
@@ -68,12 +60,16 @@ assert_eq "0" "$([ -e "$root/home/.local/bin/roborev.tmp" ] && echo 1 || echo 0)
 rm -rf "$root"
 
 # --- Case 2: matching digest → binary is accepted + installed -----------------
-# install.sh then tries to *run* the (junk) binary at step 2 and dies, but the
-# gate has already passed and installed it — which is what this case asserts.
+# install.sh then tries to *run* the (junk) binary at §2 and dies before §3's
+# daemon/install-hook steps, which talk to the real per-user service managers and
+# escape the $HOME sandbox. Asserting nonzero exit pins that boundary: if a future
+# change ever let §2 pass, this fails loudly rather than silently running §3 on the
+# host (so the sandbox stays hermetic by an enforced assertion, not added stubs).
 root="$(make_sandbox "$GOOD_SHA")"
 run_install "$root"
 assert_eq "1" "$([ -x "$root/home/.local/bin/roborev" ] && echo 1 || echo 0)" "matching digest installs an executable binary"
 assert_eq "0" "$([ -e "$root/home/.local/bin/roborev.tmp" ] && echo 1 || echo 0)" "temp download cleaned up on success"
+assert_eq "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)" "installer dies at §2 — never reaches the un-sandboxed §3 daemon path"
 rm -rf "$root"
 
 # --- Case 3: unsupported arch → fail-closed (no pinned checksum) ---------------

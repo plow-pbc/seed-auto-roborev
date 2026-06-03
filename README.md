@@ -25,7 +25,7 @@ The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies
 
 ## Adding a platform
 
-`install.sh` fetches the `roborev` binary from this repo's **GitHub Releases** as `roborev-<os>-<arch>` (e.g. `roborev-linux-x86_64`, `roborev-darwin-arm64`), pinned to a release tag (`ROBOREV_TAG` in `install.sh`) and verified against a committed `sha256`. To add a new platform (e.g. Raspberry Pi `linux-aarch64`) or bump the version:
+`install.sh` fetches the `roborev` binary from this repo's **GitHub Releases** as `roborev-<os>-<arch>` (e.g. `roborev-linux-x86_64`, `roborev-darwin-arm64`), pinned to a release tag (`ROBOREV_TAG` in `ref/install.sh`) and verified against a committed `sha256`. To add a new platform (e.g. Raspberry Pi `linux-aarch64`) or bump the version:
 
 ```bash
 # build/obtain the binary for the platform, then (<tag> must match
