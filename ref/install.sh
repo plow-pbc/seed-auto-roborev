@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Deterministic implementation of SEED.md ## Dependencies for seed-roborev (v2).
+# Deterministic implementation of SEED.md ## Dependencies for seed-roborev (v3).
 # Idempotent + fail-loud. Wires always-on roborev on this machine. roborev owns
-# `post-rewrite` (seeded by `roborev install-hook --force`); this SEED then
-# OVERWRITES `post-commit` + writes `pre-commit` with its own wrappers that add
-# the always-on confirmation lines roborev's stock silent hooks lack (the
-# wrappers still call `roborev post-commit` / `roborev list`, so no
-# double-enqueue). It also sets up the bits roborev doesn't itself: the review
-# agent (claude-code), the daemon as a managed user-level service, the global
-# core.hooksPath value, and the Claude Code PreToolUse[Bash] context bridge.
+# its own git hooks (`post-commit` enqueues a review every commit, `post-rewrite`
+# remaps on rebase/amend) via `roborev install-hook --force`. This SEED sets up
+# the bits roborev doesn't itself: the review agent (claude-code), the daemon as
+# a managed user-level service, the global core.hooksPath value, and the two
+# Claude Code PreToolUse[Bash] hooks (context bridge + pre-push gate) — the
+# surfaces that bring findings to the *agent*, where it can act on them.
 set -euo pipefail
 
 HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
@@ -142,51 +141,16 @@ else
   fail "global core.hooksPath is already set to '$current' (not ours) — refusing to clobber. Either move roborev's hooks into '$current', or unset core.hooksPath and re-run."
 fi
 
-# --- 5. install hooks ---------------------------------------------------------
-# Order matters: call roborev's install-hook first to seed post-rewrite (which
-# roborev owns), then OVERWRITE post-commit + pre-commit with our wrappers that
-# *always print a one-line confirmation* (Option A + Option B). Reason: silent
-# success defeats observability — without the always-on lines, the operator
-# can't tell "roborev is running" from "roborev is broken" until something fails.
+# --- 5. install roborev's own git hooks --------------------------------------
+# With core.hooksPath already set (§4), `roborev install-hook` writes BOTH
+# post-commit (enqueue a review every commit — point 1 of the seed's purpose)
+# and post-rewrite (remap on rebase/amend) into $HOOKS_DIR; verified to honor
+# core.hooksPath rather than writing to .git/hooks/. roborev owns both hooks —
+# the seed adds no wrapper. The agent-facing "this commit isn't being reviewed"
+# signal lives in the Claude context bridge (§6, fires into the agent's context
+# on a missing binary); `verify.sh` is the everyone-covered on-demand check.
 ( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
-
-# Shared hook library — both wrappers source it for trusted roborev resolution,
-# the LOUD missing-binary failure, and the repo-local-hook chain (see the file).
-install -m 0644 "$SEED_REPO/ref/roborev-hooklib.sh" "$HOOKS_DIR/roborev-hooklib.sh"
-
-# Option A — post-commit: enqueue + print a confirmation line every commit, then
-# chain to any repo-local post-commit. Replaces roborev's silent stock hook.
-cat > "$HOOKS_DIR/post-commit" <<'HOOK'
-#!/usr/bin/env bash
-. "${BASH_SOURCE[0]%/*}/roborev-hooklib.sh"
-if roborev="$(roborev_or_warn)"; then
-  sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
-  if "$roborev" post-commit >/dev/null 2>&1; then
-    agent=$("$roborev" config get default_agent 2>/dev/null | head -1)
-    echo "roborev: enqueued review for $sha (${agent:-?})" >&2
-  else
-    echo "roborev: post-commit FAILED — review NOT enqueued for $sha" >&2
-  fi
-fi
-chain_repo_hook post-commit "${BASH_SOURCE[0]}" "$@"
-exit 0
-HOOK
-chmod +x "$HOOKS_DIR/post-commit"
-
-# Option B — pre-commit: always print a one-line summary of open findings on
-# THIS repo+branch (not just on findings>0), so the operator sees roborev is
-# checking on every commit. Warn-only, never blocks. Chains to repo-local hook.
-cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
-#!/usr/bin/env bash
-. "${BASH_SOURCE[0]%/*}/roborev-hooklib.sh"
-if roborev="$(roborev_or_warn)"; then
-  roborev_findings_summary "$roborev"
-fi
-chain_repo_hook pre-commit "${BASH_SOURCE[0]}" "$@"
-exit 0
-HOOK
-chmod +x "$HOOKS_DIR/pre-commit"
-log "wrote post-commit + pre-commit wrappers (shared lib; loud on missing roborev); post-rewrite owned by roborev"
+log "installed roborev git hooks (post-commit + post-rewrite) -> $HOOKS_DIR"
 
 # --- 6. Claude Code hooks: context bridge (commit) + pre-push gate ------------
 # The git pre-commit hook (§5, Option B) prints findings to the TERMINAL for a
