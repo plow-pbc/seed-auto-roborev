@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic implementation of SEED.md ## Dependencies for seed-roborev (v3).
+# Deterministic implementation of SEED.md ## Dependencies for seed-auto-roborev (v3).
 # Idempotent + fail-loud. Wires always-on roborev on this machine. roborev owns
 # its own git hooks (`post-commit` enqueues a review every commit, `post-rewrite`
 # remaps on rebase/amend) via `roborev install-hook --force`. This SEED sets up
@@ -31,7 +31,7 @@ fi
 
 # --- 1b. roborev binary — auto-fetch from this SEED's GitHub release ---------
 # Truly one-shot: install.sh downloads a PINNED, checksum-verified binary from
-#   https://github.com/plow-pbc/seed-roborev/releases/download/$ROBOREV_TAG/roborev-<os>-<arch>
+#   https://github.com/plow-pbc/seed-auto-roborev/releases/download/$ROBOREV_TAG/roborev-<os>-<arch>
 # The tag + per-asset sha256 are committed here (reviewed in git), so a tampered
 # or silently-swapped release asset fails the checksum gate before it's ever run
 # — not `latest`, which would pull whatever bytes are newest with no tripwire.
@@ -46,9 +46,9 @@ if [ -z "$ROBOREV" ]; then
     Linux-x86_64)   asset="roborev-linux-x86_64";  sha="e4af0de02926cf0d3fc38176bfc096dbef90807418274655507440b3945f1184" ;;
     Linux-aarch64)  asset="roborev-linux-aarch64"; sha="fd04959e45a46c8caeafb0fa4954f0abb8c4b041e829c1c3d0163d4cbf28c48a" ;;
     Darwin-arm64)   asset="roborev-darwin-arm64";  sha="ebaba77e6a62670cd6bcc793fd484eda64b8ecebb1d2f9997e950363c37ab070" ;;
-    *) fail "no pinned roborev binary for $(uname -s)-$(uname -m) at $ROBOREV_TAG. To add one: build roborev, 'gh release upload $ROBOREV_TAG <path>#roborev-<os>-<arch> -R plow-pbc/seed-roborev', add its sha256 to ref/install.sh, then re-run." ;;
+    *) fail "no pinned roborev binary for $(uname -s)-$(uname -m) at $ROBOREV_TAG. To add one: build roborev, 'gh release upload $ROBOREV_TAG <path>#roborev-<os>-<arch> -R plow-pbc/seed-auto-roborev', add its sha256 to ref/install.sh, then re-run." ;;
   esac
-  url="https://github.com/plow-pbc/seed-roborev/releases/download/$ROBOREV_TAG/$asset"
+  url="https://github.com/plow-pbc/seed-auto-roborev/releases/download/$ROBOREV_TAG/$asset"
   mkdir -p "$HOME/.local/bin"
   log "fetching $asset ($ROBOREV_TAG) from $url"
   curl -fsSL "$url" -o "$HOME/.local/bin/roborev.tmp" \
@@ -216,4 +216,17 @@ rm -f "$tmp_settings"
 chmod 600 "$SETTINGS"
 log "merged PreToolUse[Bash] roborev bridge + pre-push gate into $SETTINGS"
 
-log "seed-roborev install complete — run ref/verify.sh to confirm."
+# --- 7. Claude Code skill: roborev usage + the review-loop contract ----------
+# The §6 hooks bring findings TO the agent; this skill teaches the agent how to
+# USE roborev and the workflow contract it serves (let reviews finish before
+# push, fix or `roborev close` fail-verdict findings, never push over an unread
+# verdict=F). A skill is Claude Code's native home for "how to use tool X + its
+# loop" and auto-activates on commit/push triggers. Installed to ~/.claude/skills
+# as a real dir: claude-config's `just install` only prunes ITS OWN repo-owned
+# skill symlinks and preserves user-owned entries, so this coexists collision-free.
+SKILL_DIR="$HOME/.claude/skills/roborev"
+mkdir -p "$SKILL_DIR"
+install -m 0644 "$SEED_REPO/skills/roborev/SKILL.md" "$SKILL_DIR/SKILL.md"
+log "installed roborev usage skill -> $SKILL_DIR/SKILL.md"
+
+log "seed-auto-roborev install complete — run ref/verify.sh to confirm."

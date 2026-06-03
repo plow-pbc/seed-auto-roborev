@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse[Bash] context bridge — installed by the seed-roborev SEED to
+"""PreToolUse[Bash] context bridge — installed by the seed-auto-roborev SEED to
 surface open roborev fail-verdict reviews into a Claude Code agent's context
 right before it runs `git commit`, so the findings get addressed (or explicitly
 closed) instead of evaporating into the daemon's sqlite.
@@ -55,10 +55,10 @@ from _roborev_hooklib import (
 
 MAX_REVIEWS = 5
 MISSING_ROBOREV_WARNING = (
-    "⚠️ roborev is not installed, but the seed-roborev Claude bridge hook is "
+    "⚠️ roborev is not installed, but the seed-auto-roborev Claude bridge hook is "
     "active — the install is broken and commits on this machine are NOT being "
     "reviewed. Re-run the seed installer before continuing: "
-    "`bash <seed-roborev>/ref/install.sh`. (To disable the bridge instead, "
+    "`bash <seed-auto-roborev>/ref/install.sh`. (To disable the bridge instead, "
     "remove the PreToolUse[Bash] roborev entry from ~/.claude/settings.json.)"
 )
 UNTRUSTED_DATA_WARNING = (

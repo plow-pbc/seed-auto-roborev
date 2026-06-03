@@ -12,7 +12,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # linux-x86_64 is forced via the uname stub, so the expected URL + committed sha
 # are deterministic regardless of the host running `just test`. Keep in sync with
 # the matching arm in install.sh (a drift here means the gate isn't being tested).
-EXPECT_URL="https://github.com/plow-pbc/seed-roborev/releases/download/v0.1/roborev-linux-x86_64"
+EXPECT_URL="https://github.com/plow-pbc/seed-auto-roborev/releases/download/v0.1/roborev-linux-x86_64"
 GOOD_SHA="e4af0de02926cf0d3fc38176bfc096dbef90807418274655507440b3945f1184"
 
 # Build a hermetic sandbox: temp HOME + a stub bin dir that shadows the fetch

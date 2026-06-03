@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared assert harness for the seed-roborev unit suites (sourced, not executed;
+# Shared assert harness for the seed-auto-roborev unit suites (sourced, not executed;
 # mirrors claude-config's tests/assert.sh). Each helper bumps ASSERT_PASS/FAIL;
 # assert_summary prints the tally and exits non-zero if any assertion failed.
 ASSERT_PASS=0 ASSERT_FAIL=0

@@ -1,6 +1,6 @@
-# seed-roborev
+# seed-auto-roborev
 
-A [SEED](https://github.com/plow-pbc/seed) that turns on **always-on local commit review** with [roborev](https://github.com/plow-pbc/roborev): every commit on the machine is reviewed automatically by a local AI reviewer, and open findings are surfaced before the next commit.
+A [SEED](https://github.com/plow-pbc/seed) that turns on **always-on local commit review** with [roborev](https://github.com/plow-pbc/roborev): every commit on the machine is reviewed automatically by a local AI reviewer, and open findings are surfaced before the next commit. Its point is to let roborev run **autonomously via a Claude Code agent** — the agent commits, the findings come back to it, and it acts on them before pushing.
 
 ## Purpose
 
@@ -15,11 +15,13 @@ Before `git commit`, a **context bridge** injects open fail-verdict findings for
 
 Claude Code also gets a **pre-push gate** (`roborev-pre-push-gate.py`, same seed-owned path): where the bridge only *warns* before a commit, the gate **denies** a `git push` while the branch has open fail-verdict reviews — after waiting up to 600s for in-flight reviews to land. Commit is too frequent to block, so it warns; push is the export boundary, so it gates — the forcing function that stops findings piling up unseen. The push stays blocked until each open fail review is **resolved**: fix the valid findings (a new commit) and decline the invalid/YAGNI ones (`roborev comment <id> -m "<why>"` recording why), then `roborev close <id>` either way — by hand, per finding, never delegated to the autonomous `roborev refine`/`roborev fix` loops (they apply every finding without the valid-vs-YAGNI judgment, and `refine` runs in a git worktree). Both hooks share one `_roborev_hooklib.py`, so they agree on what an "outstanding finding" is. It's Claude-only and bypassable on a box you control — a workflow forcing function against silently pushing over a `verdict=F` you never read, not a security boundary.
 
+Finally, the SEED installs a **`roborev` usage skill** to `~/.claude/skills/roborev/SKILL.md` — the agent-facing complement to the hooks. The hooks bring findings *to* the agent; the skill teaches it how to *use* roborev and the review-loop contract (the gate *forces* the behavior, the skill *teaches* it, so it holds even where the gate is absent). It auto-activates on commit/push and lands as a real file, so a config repo that symlink-manages its own skills leaves it intact. The full contract, command reference, and operational sharp edges live in [`skills/roborev/SKILL.md`](skills/roborev/SKILL.md) — the single source of truth, not duplicated here.
+
 ## Install
 
 If your agent has the `seed-install` skill:
 
-> Install `git@github.com:plow-pbc/seed-roborev.git`
+> Install `git@github.com:plow-pbc/seed-auto-roborev.git`
 
 The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies` install steps (announcing each shell block first), then answers the `## Verify` prompts. CI / non-AI callers can run the deterministic equivalents at [`ref/install.sh`](ref/install.sh) and [`ref/verify.sh`](ref/verify.sh).
 
@@ -30,7 +32,7 @@ The agent clones the repo, reads [`SEED.md`](SEED.md), runs its `## Dependencies
 ```bash
 # build/obtain the binary for the platform, then (<tag> must match
 # ROBOREV_TAG in ref/install.sh — the installer owns the canonical tag):
-gh release upload <tag> path/to/roborev#roborev-linux-aarch64 -R plow-pbc/seed-roborev
+gh release upload <tag> path/to/roborev#roborev-linux-aarch64 -R plow-pbc/seed-auto-roborev
 shasum -a 256 path/to/roborev   # or: sha256sum — copy the digest
 ```
 

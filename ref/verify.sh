@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deterministic implementation of SEED.md ## Verify for seed-roborev (v6).
+# Deterministic implementation of SEED.md ## Verify for seed-auto-roborev (v6).
 # Read-only on installed state, EXCEPT one ephemeral throwaway git repo it
 # creates + a single commit in it: a deliberately-broken hello-world that a
 # claude-code reviewer must flag, proving the review loop end-to-end via the
@@ -80,6 +80,16 @@ else
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
+# --- ^v-skill — Claude Code roborev usage skill ------------------------------
+SKILL="$HOME/.claude/skills/roborev/SKILL.md"
+# Assert the FIRST frontmatter block (line 1 `---`, line 2 `name: roborev`) — not
+# just `name: roborev` matched anywhere, which malformed YAML could satisfy.
+if [ -f "$SKILL" ] && [ "$(sed -n 1p "$SKILL")" = "---" ] && [ "$(sed -n 2p "$SKILL")" = "name: roborev" ]; then
+  ok "^v-skill: roborev usage skill installed with valid frontmatter at $SKILL"
+else
+  bad "^v-skill: roborev skill missing or malformed at $SKILL (expected line 1 '---', line 2 'name: roborev')"
+fi
+
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → confirm the open fail-verdict finding surfaces via
@@ -101,7 +111,7 @@ git config user.name  seed-verify
 # error that crashes on the happy path. Three independent issues — any one of
 # them surfacing as an open finding satisfies the loop test.
 cat > app.py <<'PY'
-"""Hello world with three obvious bugs (intentional for seed-roborev verify):
+"""Hello world with three obvious bugs (intentional for seed-auto-roborev verify):
 - hardcoded API-key-shaped credential in source
 - OS command injection via input() into os.system
 - TypeError on the happy path (str + int)
@@ -157,4 +167,4 @@ if [ -n "$status" ]; then
 fi
 
 [ "$fails" -eq 0 ] || { printf '\n%d check(s) FAILED\n' "$fails" >&2; exit 1; }
-printf '\nseed-roborev: all checks passed (full loop validated end-to-end)\n'
+printf '\nseed-auto-roborev: all checks passed (full loop validated end-to-end)\n'
