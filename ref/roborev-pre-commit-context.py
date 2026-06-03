@@ -286,19 +286,16 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
         # to `[]`, not crash. The `verdict == "F"` predicate is LOAD-BEARING —
         # `roborev list --open` returns PASS verdicts too; dropping it would
         # inject passing reviews into context. `not closed` drops acknowledged
-        # (via `roborev close`) reviews the unfiltered list still includes. The
-        # branch re-check is defense-in-depth: roborev is fetched from a moving
-        # release, so don't trust `--branch` scoping alone — if a row carries a
-        # branch and it doesn't match, drop it (a CLI that omits the field still
-        # works, falling back to the server-side `--branch` filter). Strip a
-        # `refs/heads/` prefix so a fully-qualified ref compares equal to git's
-        # short `--show-current` name and doesn't silently drop every row.
-        # (Detached HEAD → empty branch is handled upstream in main(): no findings.)
+        # (via `roborev close`) reviews the unfiltered list still includes.
+        # Repo+branch scoping is delegated to `--repo`/`--branch` (verified to
+        # filter server-side); we trust that the same way we trust the CLI's
+        # `--json`/`verdict` contract, rather than re-implementing the branch
+        # comparison client-side (which diverged from the shell hook over ref
+        # format / null / detached-HEAD — a parity-bug class not worth carrying).
         rows = [
             (int(j["id"]), str(j["git_ref"])[:8])
             for j in jobs
             if isinstance(j, dict) and j.get("verdict") == "F" and not j.get("closed", False)
-            and ("branch" not in j or str(j["branch"]).removeprefix("refs/heads/") == branch)
         ]
         # Sort newest-first so the cap keeps the newest findings regardless of
         # the CLI's (unverified) default order.

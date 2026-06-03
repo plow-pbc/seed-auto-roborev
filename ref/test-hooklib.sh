@@ -56,22 +56,23 @@ chmod +x "$fs_clean"
 out=$( roborev_findings_summary "$fs_clean" 2>&1 )
 assert_contains "$out" "0 open findings on this branch ✓" "findings summary prints the clean line when only PASS rows are open"
 
-# Branch scoping (parity with the bridge): from a repo on branch feature/x, a
-# branch-blind roborev returns rows from multiple branches; the helper must count
-# only THIS branch's open fails (incl. a refs/heads/-qualified one), excluding a
-# sibling branch — proving the helper scopes by branch, not just verdict.
+# Branch scoping is delegated to roborev's `--branch` (server-side). Assert the
+# helper passes it: a `--branch`-honoring stub returns only the current branch's
+# rows, so a sibling-branch fail is excluded from the count.
 fs_repo="$tmp/fsrepo"; git init -q -b feature/x "$fs_repo"
 fs_scoped="$tmp/fakeroborev_scoped"
 cat > "$fs_scoped" <<'STUB'
 #!/usr/bin/env bash
-[ "$1" = "list" ] && echo '[{"id":10,"git_ref":"r10","verdict":"F","closed":false,"branch":"feature/x"},
-  {"id":11,"git_ref":"r11","verdict":"F","closed":false,"branch":"other-branch"},
-  {"id":12,"git_ref":"r12","verdict":"F","closed":false,"branch":"refs/heads/feature/x"}]'
+branch=""; shift
+while [ $# -gt 0 ]; do case "$1" in --branch) branch="$2"; shift 2;; *) shift;; esac; done
+all='[{"id":10,"git_ref":"r10","verdict":"F","closed":false,"branch":"feature/x"},
+  {"id":11,"git_ref":"r11","verdict":"F","closed":false,"branch":"other-branch"}]'
+[ -n "$branch" ] && printf '%s' "$all" | jq -c --arg b "$branch" '[.[]|select(.branch==$b)]' || printf '%s' "$all"
 STUB
 chmod +x "$fs_scoped"
 out=$( ( cd "$fs_repo"; roborev_findings_summary "$fs_scoped" ) 2>&1 )
-assert_contains "$out" "2 open review finding(s)" "findings summary scopes to current branch (feature/x + refs/heads/feature/x kept)"
-assert_not_contains "$out" "r11" "findings summary excludes sibling-branch fail rows"
+assert_contains "$out" "1 open review finding(s)" "findings summary passes --branch so roborev scopes server-side (sibling excluded)"
+assert_not_contains "$out" "r11" "findings summary excludes sibling-branch fail rows (via --branch)"
 
 # --- chain_repo_hook: execs a repo-local hook of the same name --------------
 repo="$tmp/repo"; mkdir -p "$repo"; ( cd "$repo" && git init -q )

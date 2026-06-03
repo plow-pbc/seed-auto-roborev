@@ -61,11 +61,12 @@ if [[ "$1" == "list" ]]; then
     esac
   done
   f="$(fixture_for "$repo")"
-  # Return the WHOLE fixture array regardless of --branch (the real CLI scopes
-  # server-side, but the bridge ALSO re-filters by branch in Python as
-  # defense-in-depth — so the stub stays branch-blind to prove that Python
-  # filter carries the scoping, not the stub faithfully mimicking the CLI).
-  if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi
+  # Honor --branch like the real CLI (which scopes server-side). The bridge
+  # trusts --branch for branch scoping, so the stub must filter by it — that's
+  # what makes the cross-branch exclusion test prove the bridge passes the flag.
+  if [[ -f "$f" ]]; then
+    if [[ -n "$branch" ]]; then jq -c --arg b "$branch" '[.[] | select(.branch==$b)]' "$f"; else cat "$f"; fi
+  else echo '[]'; fi
   exit 0
 fi
 if [[ "$1" == "show" ]]; then
@@ -313,21 +314,6 @@ assert_not_contains "$ctx" "roborev-review-id=81" "cap: 6th-newest (81) dropped 
 assert_not_contains "$ctx" "roborev-review-id=80" "cap: oldest (80) dropped by MAX_REVIEWS"
 assert_contains "$ctx" "showing the 5 newest" "cap: header reports the truncation (no silent cap)"
 assert_contains "$ctx" "other 2" "cap: header reports how many were dropped"
-
-# Test: a row with NO `branch` key still surfaces — the field-absent fallback of
-# the Python branch re-filter (an older roborev that omits `branch` falls back to
-# server-side `--branch` scoping, not "drop everything").
-ctx=$(run_commit_for_fixture '[
-  {"id":90,"git_ref":"nobranch01","verdict":"F","closed":false,"body":"row with no branch field"}
-]')
-assert_contains "$ctx" "roborev-review-id=90" "branch re-filter: a row missing the branch field still surfaces"
-
-# Test: a fully-qualified `refs/heads/<branch>` row still matches git's short
-# `--show-current` name (the removeprefix normalization), so it isn't dropped.
-ctx=$(run_commit_for_fixture '[
-  {"id":91,"git_ref":"refsheads01","branch":"refs/heads/feature/x","verdict":"F","closed":false,"body":"fully-qualified ref"}
-]')
-assert_contains "$ctx" "roborev-review-id=91" "branch re-filter: refs/heads/<branch> normalizes to the short name (not dropped)"
 
 # --- missing roborev binary -> loud WARNING into context (never deny) --------
 # A git-commit payload in a real repo with NO roborev binary reachable must

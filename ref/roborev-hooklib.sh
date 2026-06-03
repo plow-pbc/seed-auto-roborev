@@ -33,19 +33,16 @@ roborev_or_warn() {
 # Print the pre-commit open-findings summary to stderr: the count + short list of
 # OPEN FAIL-verdict reviews on THIS repo+branch, or the clean line. Scoped and
 # filtered to match the Claude bridge exactly so the two surfaces agree:
-#   - pass `--repo`/`--branch` (the bridge's scoping; `roborev list --open` alone
-#     is not reliably branch-scoped, and the wording claims "on this branch");
+#   - pass `--repo`/`--branch` so roborev scopes server-side (verified to filter
+#     by branch), the same scoping the bridge uses;
 #   - keep only `verdict == "F" && !closed` (`--open` includes PASS rows, which
-#     are NOT findings — counting them raw over-reports on a clean branch);
-#   - re-check the branch in jq as defense-in-depth (refs/heads/ normalized; a
-#     row missing the field falls back to the server-side `--branch` scoping).
+#     are NOT findings — counting them raw over-reports on a clean branch).
 roborev_findings_summary() {  # roborev_findings_summary <roborev-path>
   local rb="$1" fails n root branch
   root="$(git rev-parse --show-toplevel 2>/dev/null)"
   branch="$(git branch --show-current 2>/dev/null)"
   fails="$("$rb" list --open --json ${root:+--repo "$root"} ${branch:+--branch "$branch"} 2>/dev/null \
-    | jq -c --arg b "$branch" '[.[] | select(.verdict=="F" and (.closed | not)
-        and ((.branch // $b) | sub("^refs/heads/";"") == $b))]' 2>/dev/null || echo '[]')"
+    | jq -c '[.[] | select(.verdict=="F" and (.closed | not))]' 2>/dev/null || echo '[]')"
   n="$(printf '%s' "$fails" | jq 'length' 2>/dev/null || echo 0)"
   if [ "${n:-0}" -gt 0 ]; then
     echo "roborev: ${n} open review finding(s) on this branch — review before committing more:" >&2
