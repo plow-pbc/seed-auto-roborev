@@ -46,6 +46,16 @@ printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >
   || bad "^v-bridge[hardblock]: did NOT deny on missing roborev binary"
 rm -rf "$hb_repo"
 
+# --- ^v-gate — Claude Code pre-push gate (seed-owned PreToolUse[Bash]) --------
+GATE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-push-gate.py"
+[ -x "$GATE" ] && ok "^v-gate[file]: installed at $GATE" || bad "^v-gate[file]: missing/not-exec at $GATE"
+if [ -f "$HOME/.claude/settings.json" ] && \
+   jq -e --arg g "$GATE" 'any(.hooks.PreToolUse[]?; .hooks[]? | select(.command == $g) | .timeout == 660)' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "^v-gate[settings]: PreToolUse[Bash] gate entry present with timeout 660 in ~/.claude/settings.json"
+else
+  bad "^v-gate[settings]: PreToolUse[Bash] roborev gate entry (timeout 660) NOT found in ~/.claude/settings.json"
+fi
+
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → second commit → confirm the open-findings warning surfaced.

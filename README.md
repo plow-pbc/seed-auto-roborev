@@ -12,7 +12,10 @@ This SEED is the one-shot installer for that. It wires both halves of the loop m
 - **check results before the next commit** — a SEED-owned git `pre-commit` hook surfaces open findings to stderr (and **always** prints either `roborev: 0 open findings ✓` or `roborev: N open review finding(s)`), so the operator sees on every commit that the check ran. Agent-agnostic (covers claude, codex, humans).
 - **observable on every commit** — both hooks emit a one-line stderr confirmation every time. Silent success is indistinguishable from "roborev never installed"; the always-on lines are how you can tell at a glance that the loop is alive.
 
-Claude Code additionally gets an *earlier*, richer version of the before-commit check: the SEED installs a `PreToolUse[Bash]` **context bridge** that injects open findings into the agent's context before it runs `git commit`. It lives at the seed-owned path `~/.config/roborev/claude-hooks/roborev-pre-commit-context.py` and is wired into `~/.claude/settings.json`. Complement to the universal git `pre-commit`, not a replacement — and unlike that warn-only hook, the bridge **hard-blocks** the commit if the roborev binary has gone missing (a broken-install signal, since the SEED guarantees roborev is installed).
+Claude Code additionally gets two `PreToolUse[Bash]` hooks, both living at the seed-owned path `~/.config/roborev/claude-hooks/` and wired into `~/.claude/settings.json`. They share `_roborev_hooklib.py` (the security-sensitive `git`/`roborev` discovery + PATH-attack-guard helpers), installed in the same dir:
+
+- a **context bridge** (`roborev-pre-commit-context.py`) — an *earlier*, richer version of the before-commit check: it injects open findings into the agent's context before it runs `git commit`. Complement to the universal git `pre-commit`, not a replacement — and unlike that warn-only hook, the bridge **hard-blocks** the commit if the roborev binary has gone missing (a broken-install signal, since the SEED guarantees roborev is installed).
+- a **pre-push gate** (`roborev-pre-push-gate.py`) — **blocks** a Claude push while the branch has open fail-verdict reviews, first waiting up to 10 minutes for any in-flight reviews to finish. Registered with `timeout 660` (it waits up to 600s; +60s headroom so the deny still emits).
 
 ## Install
 
