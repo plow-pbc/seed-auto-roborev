@@ -332,6 +332,29 @@ out=$(printf '%s' "$payload" | PATH="$repo_dir/bin:$PATH" python3 "$HOOK")
 [ ! -f "$bash_sentinel" ]; assert_rc 0 $? "_sanitized_env strips repo bin from PATH for roborev subprocess (env shebang can't bounce into repo bin/bash)"
 rm -rf "$repo_dir/bin"
 
+# Test: PATH-sanitization on the SIBLING `-C` path — the CALLER checkout's
+# bin/bash must ALSO be stripped from the `roborev show` subprocess env (the
+# trusted roborev uses `#!/usr/bin/env bash`). Without carrying the caller root
+# into _sanitized_env, env would find $caller_dir/bin/bash. The FAKE FINDING
+# assertion confirms `roborev show` actually ran (so the strip isn't vacuous).
+caller_dir="$tmp/callerrepo2"
+git init -q -b feature/x "$caller_dir"
+mkdir -p "$caller_dir/bin"
+sib_bash_sentinel="$tmp/SIBLING_BASH_RAN"
+cat > "$caller_dir/bin/bash" <<BIN
+#!/bin/bash
+touch "$sib_bash_sentinel"
+exit 0
+BIN
+chmod +x "$caller_dir/bin/bash"
+payload=$(jq -n --arg cmd "git -C $repo_dir commit -m foo" --arg cwd "$caller_dir" \
+  '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
+out=$(printf '%s' "$payload" | PATH="$caller_dir/bin:$PATH" python3 "$HOOK")
+[ ! -f "$sib_bash_sentinel" ]; assert_rc 0 $? "sibling -C: _sanitized_env strips the CALLER checkout's bin from the roborev subprocess PATH"
+printf '%s' "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("FAKE FINDING")' >/dev/null 2>&1
+assert_rc 0 $? "sibling -C: still surfaces the target repo's finding through the trusted roborev (so the strip check isn't vacuous)"
+rm -rf "$caller_dir"
+
 # Test: false-positive guard against `git log --grep commit` (space form, not
 # the `--grep=commit` form above). Subcommand must be the first non-option
 # token after git, so `commit` as a flag value must not fire.
