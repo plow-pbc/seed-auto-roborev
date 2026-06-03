@@ -153,9 +153,9 @@ fi
 log "installed roborev git hooks (post-commit + post-rewrite) -> $HOOKS_DIR"
 
 # --- 6. Claude Code hooks: context bridge (commit) + pre-push gate ------------
-# The git pre-commit hook (§5, Option B) prints findings to the TERMINAL for a
-# human. These two Claude Code PreToolUse[Bash] hooks bring the same findings to
-# an AGENT, at the two surfaces where it can act on them:
+# roborev's own post-commit hook (§5) reviews every commit but its findings have
+# no native path into an agent's context. These two Claude Code PreToolUse[Bash]
+# hooks bring those findings to the AGENT, at the two surfaces where it can act:
 #   - the bridge WARNS before `git commit` (injects open fail-verdict findings
 #     into context, or a broken-install warning) — context-only, never denies;
 #   - the gate DENIES a `git push` while open fail-verdict reviews remain (after
