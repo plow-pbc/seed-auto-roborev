@@ -29,6 +29,26 @@ hp="$(git config --global core.hooksPath || true)"
 [ -x "$HOOKS_DIR/post-commit" ] && ok "^v-postcommit: post-commit executable" || bad "^v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
 [ -x "$HOOKS_DIR/pre-commit" ]  && ok "^v-precommit:  pre-commit executable"  || bad "^v-precommit: $HOOKS_DIR/pre-commit missing or not executable"
 
+# --- ^v-bridge — Claude Code context bridge (seed-owned PreToolUse[Bash]) -----
+BRIDGE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py"
+[ -x "$BRIDGE" ] && ok "^v-bridge[file]: installed at $BRIDGE" || bad "^v-bridge[file]: missing/not-exec at $BRIDGE"
+if [ -f "$HOME/.claude/settings.json" ] && \
+   jq -e --arg b "$BRIDGE" 'any(.hooks.PreToolUse[]?;
+     .matcher == "Bash" and
+     any(.hooks[]?; .type == "command" and .command == $b))' \
+   "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "^v-bridge[settings]: PreToolUse[Bash] entry present in ~/.claude/settings.json"
+else
+  bad "^v-bridge[settings]: PreToolUse[Bash] roborev entry NOT found in ~/.claude/settings.json"
+fi
+hb_repo="$(mktemp -d)"; ( cd "$hb_repo" && git init -q )
+hb_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s"}' "$hb_repo" \
+  | HOME="$(mktemp -d)" PATH="/usr/bin:/bin" "$BRIDGE" 2>/dev/null)
+printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.additionalContext | contains("ref/install.sh")' >/dev/null 2>&1 \
+  && ok "^v-bridge[warn]: warns into context when roborev binary is missing" \
+  || bad "^v-bridge[warn]: did NOT warn on missing roborev binary"
+rm -rf "$hb_repo"
+
 # --- ^v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → second commit → confirm the open-findings warning surfaced.
@@ -105,7 +125,11 @@ esac
 # the broken hello world. If 0 open findings, the agent missed all 3 bugs —
 # real failure of the loop's value, not just the test.
 if [ -n "$status" ]; then
-  open_now=$("$ROBOREV" list --repo "$tmp" --open --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+  # Count only OPEN FAIL-verdict reviews — the SAME `verdict=="F" && !closed`
+  # contract the bridge + pre-commit hook use (`--open` includes PASS rows, which
+  # are not findings). Counting raw rows would let a PASS-only review satisfy the
+  # loop's "the reviewer flagged the broken code" assertion.
+  open_now=$("$ROBOREV" list --repo "$tmp" --open --json 2>/dev/null | jq '[.[] | select(.verdict=="F" and (.closed | not))] | length' 2>/dev/null || echo 0)
   if [ "${open_now:-0}" -gt 0 ]; then
     ok "^v-loop[findings]: claude-code flagged $open_now open finding(s) on the broken code"
   else
