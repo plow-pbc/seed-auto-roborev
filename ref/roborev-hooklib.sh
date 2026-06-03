@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Shared library for the SEED-owned git hooks (post-commit + pre-commit).
+# SOURCED, never executed directly (git only runs files named like a hook, so
+# this name is ignored). Owns the three things both hooks need:
+#   1. a sanitized PATH (so a checkout-controlled bin/roborev|git|jq can't run
+#      during a hook — the hooks fire in every repo, including untrusted ones);
+#   2. roborev resolution + a LOUD failure when it's missing (the SEED
+#      guarantees roborev is installed, so a missing binary is a broken install
+#      and every commit silently going unreviewed is the exact failure the
+#      always-on confirmation lines exist to prevent);
+#   3. chaining to a repo-local hook of the same name.
+
+# Fixed, trusted PATH (mirrors the daemon service's PATH). Exported so the
+# git/jq/head calls in the hook bodies also resolve from trusted dirs only.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Echo the resolved roborev path (stdout) on success; on a missing binary, print
+# a loud broken-install line to stderr and return 1 so the caller skips its
+# roborev body but still chains the repo-local hook. Re-resolves per call (under
+# the current $HOME/$PATH) so it stays testable.
+roborev_or_warn() {
+  local rb="$HOME/.local/bin/roborev"
+  [ -x "$rb" ] || rb="$(command -v roborev || true)"
+  if [ -x "$rb" ]; then printf '%s' "$rb"; return 0; fi
+  echo "roborev: BROKEN INSTALL — binary not found; commits on this machine are NOT being reviewed. Re-run the seed installer: bash <seed-roborev>/ref/install.sh" >&2
+  return 1
+}
+
+# Exec a repo-local hook of the same name, if present and not this wrapper
+# itself. Replaces the process, so call it LAST in each hook.
+chain_repo_hook() {  # chain_repo_hook <hook-name> <self-path> [hook args...]
+  local name="$1" self="$2"; shift 2
+  local git_dir repo_hook
+  git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+  repo_hook="${git_dir:+$git_dir/hooks/$name}"
+  if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "$self" ]; then
+    exec "$repo_hook" "$@"
+  fi
+}

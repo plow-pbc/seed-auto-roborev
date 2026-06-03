@@ -144,18 +144,22 @@ fi
 
 # --- 5. install hooks ---------------------------------------------------------
 # Order matters: call roborev's install-hook first to seed post-rewrite (which
-# roborev owns), then OVERWRITE post-commit + pre-commit with our versions that
+# roborev owns), then OVERWRITE post-commit + pre-commit with our wrappers that
 # *always print a one-line confirmation* (Option A + Option B). Reason: silent
 # success defeats observability — without the always-on lines, the operator
 # can't tell "roborev is running" from "roborev is broken" until something fails.
 ( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
 
+# Shared hook library — both wrappers source it for trusted roborev resolution,
+# the LOUD missing-binary failure, and the repo-local-hook chain (see the file).
+install -m 0644 "$SEED_REPO/ref/roborev-hooklib.sh" "$HOOKS_DIR/roborev-hooklib.sh"
+
 # Option A — post-commit: enqueue + print a confirmation line every commit, then
 # chain to any repo-local post-commit. Replaces roborev's silent stock hook.
 cat > "$HOOKS_DIR/post-commit" <<'HOOK'
 #!/usr/bin/env bash
-roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
-if [ -x "$roborev" ]; then
+. "$(dirname "${BASH_SOURCE[0]}")/roborev-hooklib.sh"
+if roborev="$(roborev_or_warn)"; then
   sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
   if "$roborev" post-commit >/dev/null 2>&1; then
     agent=$("$roborev" config get default_agent 2>/dev/null | head -1)
@@ -164,11 +168,7 @@ if [ -x "$roborev" ]; then
     echo "roborev: post-commit FAILED — review NOT enqueued for $sha" >&2
   fi
 fi
-git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
-repo_hook="${git_dir:+$git_dir/hooks/post-commit}"
-if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "${BASH_SOURCE[0]}" ]; then
-  exec "$repo_hook" "$@"
-fi
+chain_repo_hook post-commit "${BASH_SOURCE[0]}" "$@"
 exit 0
 HOOK
 chmod +x "$HOOKS_DIR/post-commit"
@@ -178,8 +178,8 @@ chmod +x "$HOOKS_DIR/post-commit"
 # checking on every commit. Warn-only, never blocks. Chains to repo-local hook.
 cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
-roborev="$(command -v roborev || echo "$HOME/.local/bin/roborev")"
-if [ -x "$roborev" ]; then
+. "$(dirname "${BASH_SOURCE[0]}")/roborev-hooklib.sh"
+if roborev="$(roborev_or_warn)"; then
   n="$("$roborev" list --open --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)"
   if [ "${n:-0}" -gt 0 ]; then
     {
@@ -191,15 +191,11 @@ if [ -x "$roborev" ]; then
     echo "roborev: 0 open findings on this branch ✓" >&2
   fi
 fi
-git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
-repo_hook="${git_dir:+$git_dir/hooks/pre-commit}"
-if [ -n "$repo_hook" ] && [ -x "$repo_hook" ] && ! [ "$repo_hook" -ef "${BASH_SOURCE[0]}" ]; then
-  exec "$repo_hook" "$@"
-fi
+chain_repo_hook pre-commit "${BASH_SOURCE[0]}" "$@"
 exit 0
 HOOK
 chmod +x "$HOOKS_DIR/pre-commit"
-log "wrote post-commit + pre-commit (always-on confirmation lines); post-rewrite owned by roborev"
+log "wrote post-commit + pre-commit wrappers (shared lib; loud on missing roborev); post-rewrite owned by roborev"
 
 # --- 6. Claude Code context bridge -------------------------------------------
 # The git pre-commit hook (§5, Option B) prints findings to the TERMINAL for a
@@ -215,6 +211,10 @@ log "installed Claude bridge -> $BRIDGE_DIR/roborev-pre-commit-context.py"
 
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
+# If settings.json is a symlink (e.g. managed from a dotfiles repo), resolve to
+# the real file so the atomic mv updates it in place instead of replacing the
+# symlink with a regular file and orphaning the link.
+[ -L "$SETTINGS" ] && SETTINGS="$(readlink -f "$SETTINGS")"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 command -v jq >/dev/null || fail "jq required to merge the Claude bridge into $SETTINGS"
 bridge_cmd="$BRIDGE_DIR/roborev-pre-commit-context.py"
