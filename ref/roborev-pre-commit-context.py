@@ -326,8 +326,8 @@ def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[
         # Build the rows INSIDE the try: free-form CLI JSON has no schema
         # guarantee, so a drifted shape (missing/null `id`, non-dict entry,
         # object-not-array) must fail soft to `[]` — not crash the hook with a
-        # KeyError/TypeError/AttributeError, which would break the docstring's
-        # fail-soft promise on every commit.
+        # KeyError/TypeError, which would break the docstring's fail-soft
+        # promise on every commit.
         rows = [
             (int(j["id"]), str(j["git_ref"])[:8])
             for j in jobs
