@@ -7,10 +7,10 @@ daemon's sqlite.
 
 The roborev post-commit hook enqueues a review after every commit, but its
 findings have no native path back into Claude's context — they sit in
-~/.roborev/reviews.db until someone runs `roborev list` or `tui`. This
-hook reads the same DB and injects open fail-verdict reviews for the
-current branch into Claude's context at the moment Claude is about to
-commit again.
+the daemon until someone runs `roborev list` or `tui`. This hook queries
+the same public `roborev list` CLI the pre-push gate uses and injects open
+fail-verdict reviews for the current branch into Claude's context at the
+moment Claude is about to commit again.
 
 Triggers when the Bash command is `git commit` OR `git -C <dir> commit`
 (latter is used by the `/cleanup` skill committing into a sibling
@@ -29,11 +29,12 @@ collisions across repos (every repo has `main`; multiple plow siblings
 have `feat/release-preflight-and-deploy-fixes`, etc.) would otherwise
 surface findings from the wrong repo.
 
-Schema assumption: reads `reviews.verdict_bool` (0=fail, 1=pass) and
-`reviews.closed`, joined to `review_jobs` on job_id and `repos` on
-repo_id, filtered by `repos.root_path` + `review_jobs.branch`. If the
-schema drifts the query will fail and the hook will no-op rather than
-blow up.
+CLI seam: queries `roborev list --json --repo <root> --branch <branch>`
+(the same public command the pre-push gate uses) and keeps the entries
+whose `verdict == "F"` and `closed` is falsy. No private schema is read —
+if roborev's JSON shape drifts the hook fails soft (empty list) rather
+than blowing up. Mapping is `(int(j["id"]), j["git_ref"][:8])`, newest
+first, capped at MAX_REVIEWS.
 """
 from __future__ import annotations
 
@@ -47,7 +48,6 @@ import sys
 from pathlib import Path
 
 
-DB_PATH = Path.home() / ".roborev" / "reviews.db"
 ROBOREV_CANDIDATES = (
     Path.home() / ".local" / "bin" / "roborev",
     Path("/usr/local/bin/roborev"),
@@ -146,13 +146,11 @@ def main() -> int:
         return 0
 
     # Binary present -> surface open fail-verdict findings as informational
-    # context (never blocks). DB absent = no reviews yet = benign, allow.
-    if not DB_PATH.exists():
-        return 0
+    # context (never blocks). No open fail reviews = benign, allow.
     branch = _current_branch(cwd)
     if not branch:
         return 0
-    rows = _fail_open_reviews(repo_root, branch)
+    rows = _fail_open_reviews(roborev, repo_root, branch)
     if not rows:
         return 0
 
@@ -284,33 +282,34 @@ def _git_toplevel(cwd: str) -> str:
     return _git_stdout(cwd, "rev-parse", "--show-toplevel")
 
 
-def _fail_open_reviews(repo_root: str, branch: str) -> list[tuple[int, str]]:
-    import sqlite3
+def _fail_open_reviews(roborev: str, repo_root: str, branch: str) -> list[tuple[int, str]]:
+    """Return `[(job_id, short_sha), ...]` for OPEN FAIL-verdict reviews on
+    this repo+branch via the public `roborev list` CLI (the same seam the
+    pre-push gate uses). Best-effort: any subprocess/JSON error yields `[]`
+    — the bridge is informational, so fail-soft is correct here (failing
+    closed is the gate's job). Newest-first, capped at MAX_REVIEWS.
+
+    Run through the hardened discovery's resolved binary with the
+    PATH-sanitized env + repo cwd so a checkout-controlled shebang
+    interpreter can't be bounced into.
+    """
     try:
-        con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=1.0)
-    except sqlite3.Error:
+        r = subprocess.run(
+            [roborev, "list", "--json", "--repo", repo_root, "--branch", branch],
+            cwd=repo_root, capture_output=True, text=True, timeout=5,
+            env=_sanitized_env(repo_root),
+        )
+        if r.returncode != 0:
+            return []
+        jobs = json.loads(r.stdout)
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError, ValueError):
         return []
-    try:
-        rows = con.execute(
-            """
-            SELECT rj.id, substr(rj.git_ref, 1, 8)
-            FROM review_jobs rj
-            JOIN reviews r ON r.job_id = rj.id
-            JOIN repos rp ON rp.id = rj.repo_id
-            WHERE rp.root_path = ?
-              AND rj.branch = ?
-              AND r.verdict_bool = 0
-              AND r.closed = 0
-            ORDER BY rj.id DESC
-            LIMIT ?
-            """,
-            (repo_root, branch, MAX_REVIEWS),
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        con.close()
-    return [(int(jid), sha) for jid, sha in rows]
+    rows = [
+        (int(j["id"]), str(j["git_ref"])[:8])
+        for j in jobs
+        if j.get("verdict") == "F" and not j.get("closed", False)
+    ]
+    return rows[:MAX_REVIEWS]
 
 
 def _find_roborev(repo_root: str | None = None) -> str | None:

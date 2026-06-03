@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Standalone unit tests for the seed-installed Claude-Code context bridge
-# (roborev-pre-commit-context.py). Mocks $HOME with a fake roborev binary +
-# a fake sqlite reviews.db; no daemon required. Ported from claude-config's
+# (roborev-pre-commit-context.py). Mocks $HOME with a fake roborev binary
+# that answers the bridge's two subcommands (`list --json …` and `show <id>`)
+# off a per-repo JSON fixture; no daemon required. Ported from claude-config's
 # tests/test-hooks.sh (the roborev-hook scenarios only — the --scan-file
 # responsibility stayed in claude-config), plus a NEW hard-block scenario
 # unique to the seed: a git-commit with NO roborev binary reachable must DENY.
@@ -31,61 +32,96 @@ assert_summary() { printf '%s passed, %s failed\n' "$ASSERT_PASS" "$ASSERT_FAIL"
 HOOK="$(cd "$(dirname "$0")" && pwd)/roborev-pre-commit-context.py"
 [ -x "$HOOK" ]; assert_rc 0 $? "roborev bridge is executable"
 
-# --- fixture: fake $HOME with a fake roborev binary + fake reviews.db --------
+# --- fixture: fake $HOME with a fake roborev binary --------------------------
+# The bridge no longer reads any DB — it drives roborev's public CLI:
+#   roborev list --json --repo <root> --branch <branch>   -> JSON job array
+#   roborev show <id>                                      -> review body
+# The fake stub answers both off a per-repo JSON fixture: `$FIXTURES/<sha256
+# of repo root>.json` holds the job array that `list` returns for that repo,
+# and `show <id>` greps that array for the matching id's body. Keying on the
+# repo root (passed via `--repo`) is what gives us repo-scoping for free.
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp"
-mkdir -p "$HOME/.roborev" "$HOME/.local/bin"
+mkdir -p "$HOME/.local/bin"
+FIXTURES="$tmp/fixtures"; mkdir -p "$FIXTURES"
 # Prepend the stub bin dir so `_find_roborev`'s `shutil.which("roborev")`
 # resolves to the stub here, not the real `~/.local/bin/roborev` on the
 # tester's PATH.
 export PATH="$HOME/.local/bin:$PATH"
 
-# Fake roborev binary — script only ever calls `roborev show <id>` and only
-# needs the body printed to stdout.
-cat > "$HOME/.local/bin/roborev" <<'BIN'
+# Fake roborev binary. `list --json --repo R --branch B` prints the fixture
+# job array for repo R (or `[]` if none); `show <id>` prints that job's body.
+# The bridge filters verdict=="F" && !closed itself, so the stub returns the
+# WHOLE array (including PASS/closed jobs) to exercise that filter for real.
+cat > "$HOME/.local/bin/roborev" <<BIN
 #!/usr/bin/env bash
-if [[ "$1" == "show" && "$2" == "42" ]]; then
-  cat <<'OUT'
-Review for job 42 (by claude-code)
-Tokens: 1k ctx · 100 out
-------------------------------------------------------------
-## Review Findings
+FIXTURES="$FIXTURES"
+BIN
+cat >> "$HOME/.local/bin/roborev" <<'BIN'
+fixture_for() {  # echoes the fixture path for a given --repo value
+  local repo="$1"
+  printf '%s/%s.json' "$FIXTURES" "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"
+}
+if [[ "$1" == "list" ]]; then
+  repo=""; shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) repo="$2"; shift 2;;
+      --branch|--limit|--status) shift 2;;
+      *) shift;;
+    esac
+  done
+  f="$(fixture_for "$repo")"
+  if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi
+  exit 0
+fi
+if [[ "$1" == "show" ]]; then
+  id="$2"
+  # Find the body for this id across all fixtures (ids are globally unique).
+  for f in "$FIXTURES"/*.json; do
+    [[ -f "$f" ]] || continue
+    body=$(jq -r --argjson id "$id" '.[] | select(.id==$id) | .body // empty' "$f" 2>/dev/null)
+    if [[ -n "$body" ]]; then printf '%s\n' "$body"; exit 0; fi
+  done
+  exit 0
+fi
+exit 0
+BIN
+chmod +x "$HOME/.local/bin/roborev"
+
+# Helper: write a fixture JSON array for a repo root. Each job object carries
+# an extra `body` field the `show` stub serves (roborev's real `show` prints
+# the body; real `list` doesn't include it, but stashing it here keeps the
+# fixture in one place).
+write_fixture() {  # write_fixture <repo_root> <json_array>
+  local f; f="$FIXTURES/$(printf '%s' "$1" | sha256sum | cut -d' ' -f1).json"
+  printf '%s' "$2" > "$f"
+}
+
+PEM_BODY='## Review Findings
 - **Severity**: High
 - **Location**: test/file.py:1
 - **Problem**: FAKE FINDING for tests. Leaked token: sk-FAKEsecretSHOULDbeMASKEDxyz789
 - **Fix**: do the fake fix.
 ## Summary
-Fake review.
-OUT
-fi
-BIN
-chmod +x "$HOME/.local/bin/roborev"
-
-# Fake sqlite DB. Real roborev schema has more columns; the script reads only
-# the ones in the JOIN/WHERE clauses, so a minimal schema is enough.
-sqlite3 "$HOME/.roborev/reviews.db" <<'SQL'
-CREATE TABLE repos (id INTEGER PRIMARY KEY, name TEXT, root_path TEXT UNIQUE);
-CREATE TABLE review_jobs (id INTEGER PRIMARY KEY, repo_id INTEGER, git_ref TEXT, branch TEXT);
-CREATE TABLE reviews (id INTEGER PRIMARY KEY, job_id INTEGER, verdict_bool INTEGER, closed INTEGER);
-INSERT INTO review_jobs VALUES (42, 1, 'abc12345', 'feature/x');
-INSERT INTO review_jobs VALUES (43, 1, 'def45678', 'feature/x');  -- passing, should not surface
-INSERT INTO review_jobs VALUES (44, 1, 'fed98765', 'feature/x');  -- closed fail (acknowledged); should not resurface
-INSERT INTO reviews VALUES (1, 42, 0, 0);  -- fail, open
-INSERT INTO reviews VALUES (2, 43, 1, 0);  -- pass, open (excluded by verdict_bool=0)
-INSERT INTO reviews VALUES (3, 44, 0, 1);  -- fail, CLOSED (excluded by closed=0; the "acknowledged" path)
-SQL
+Fake review.'
 
 repo_dir="$tmp/testrepo"
 git init -q -b feature/x "$repo_dir"
-# Backfill the real repo path into the DB. Use `git rev-parse --show-toplevel`
-# so the path the script looks up matches the path the test stores (macOS
-# /var/folders symlinks to /private/var/folders; git returns the realpath).
+# Use `git rev-parse --show-toplevel` so the fixture key matches the path the
+# bridge passes to `--repo` (macOS /var/folders symlinks to /private/...; git
+# returns the realpath, and so does the bridge via _git_toplevel).
 repo_root_canonical=$(git -C "$repo_dir" rev-parse --show-toplevel)
-sqlite3 "$HOME/.roborev/reviews.db" "INSERT INTO repos VALUES (1, 'testrepo', '$repo_root_canonical');"
+# Job 42: open FAIL (surfaces). 43: PASS (excluded). 44: closed FAIL (excluded).
+write_fixture "$repo_root_canonical" "$(jq -n --arg body "$PEM_BODY" '[
+  {id:42, git_ref:"abc12345def", branch:"feature/x", verdict:"F", closed:false, body:$body},
+  {id:43, git_ref:"def45678abc", branch:"feature/x", verdict:"P", closed:false, body:"passing review"},
+  {id:44, git_ref:"fed98765abc", branch:"feature/x", verdict:"F", closed:true,  body:"closed/acknowledged review"}
+]')"
 
 other_repo_dir="$tmp/otherrepo"
-git init -q -b feature/x "$other_repo_dir"  # same branch name, different repo
+git init -q -b feature/x "$other_repo_dir"  # same branch name, different repo (no fixture -> [])
 
 # Test: non-Bash tool → silent no-op (no stdout, exit 0)
 out=$(printf '%s' '{"tool_name":"Edit","tool_input":{}}' | python3 "$HOOK"); rc=$?
