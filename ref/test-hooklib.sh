@@ -70,6 +70,15 @@ fs_garbage="$tmp/fakeroborev_garbage"
 printf '#!/usr/bin/env bash\n[ "$1" = "list" ] && echo "this is not json"\n' > "$fs_garbage"; chmod +x "$fs_garbage"
 out=$( roborev_findings_summary "$fs_garbage" 2>&1 )
 assert_contains "$out" "UNKNOWN" "findings summary reports UNKNOWN when 'roborev list' output is unparseable"
+assert_not_contains "$out" "0 open findings on this branch ✓" "findings summary does NOT print the clean line on unparseable output"
+
+# Empty stdout (rc=0, no output) -> UNKNOWN, not clean. jq treats empty input as
+# zero values -> n=0, which would otherwise print the false clean ✓.
+fs_empty="$tmp/fakeroborev_empty"
+printf '#!/usr/bin/env bash\n[ "$1" = "list" ] && exit 0\n' > "$fs_empty"; chmod +x "$fs_empty"
+out=$( roborev_findings_summary "$fs_empty" 2>&1 )
+assert_contains "$out" "UNKNOWN" "findings summary reports UNKNOWN when 'roborev list' emits no output (empty stdout)"
+assert_not_contains "$out" "0 open findings on this branch ✓" "findings summary does NOT print the clean line on empty output"
 
 # Repo+branch scoping is delegated to roborev's `--repo`/`--branch` (server-side).
 # Assert the helper passes BOTH: a stub that honors both returns only this repo's

@@ -49,6 +49,12 @@ roborev_findings_summary() {  # roborev_findings_summary <roborev-path>
     echo "roborev: could NOT list reviews — open-findings status UNKNOWN on this branch" >&2
     return
   fi
+  if [ -z "$raw" ]; then
+    # rc=0 but no stdout: jq treats empty input as zero values -> empty output ->
+    # n=0, which would print the clean ✓. That's a false-clean too — UNKNOWN.
+    echo "roborev: 'roborev list' returned no output — open-findings status UNKNOWN on this branch" >&2
+    return
+  fi
   if ! fails="$(printf '%s' "$raw" | jq -c '[.[] | select(.verdict=="F" and (.closed | not))]' 2>/dev/null)"; then
     echo "roborev: could NOT parse 'roborev list' output — open-findings status UNKNOWN on this branch" >&2
     return
