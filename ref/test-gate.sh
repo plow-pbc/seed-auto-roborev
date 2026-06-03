@@ -115,6 +115,8 @@ is_deny "$out"; assert_rc 0 $? "gate DENIES push with an open fail-verdict revie
 reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 assert_contains "$reason" "#20" "deny reason names the blocking review id"
 assert_contains "$reason" "roborev close" "deny reason tells how to acknowledge/defer"
+assert_contains "$reason" "roborev refine" "deny reason names the refine loop to steer off"
+assert_contains "$reason" "roborev fix" "deny reason names the fix loop to steer off too"
 
 # `git -C <dir> push` form resolves the repo via -C and still denies.
 root2=$(new_repo '[{"id":21,"git_ref":"def456","status":"done","verdict":"F","closed":false}]')
