@@ -199,4 +199,34 @@ HOOK
 chmod +x "$HOOKS_DIR/pre-commit"
 log "wrote post-commit + pre-commit (always-on confirmation lines); post-rewrite owned by roborev"
 
+# --- 6. Claude Code context bridge -------------------------------------------
+# The git pre-commit hook (§5, Option B) prints findings to the TERMINAL for a
+# human. This bridge injects open fail-verdict findings into a Claude Code
+# agent's CONTEXT before it commits, AND hard-blocks the commit if roborev has
+# gone missing. Installed to a seed-owned path (NOT ~/.claude/hooks, which is a
+# symlink into the claude-config repo) + registered via ~/.claude/settings.json.
+BRIDGE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks"
+mkdir -p "$BRIDGE_DIR"
+install -m 0755 "$SEED_REPO/ref/roborev-pre-commit-context.py" "$BRIDGE_DIR/roborev-pre-commit-context.py"
+log "installed Claude bridge -> $BRIDGE_DIR/roborev-pre-commit-context.py"
+
+SETTINGS="$HOME/.claude/settings.json"
+mkdir -p "$HOME/.claude"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+command -v jq >/dev/null || fail "jq required to merge the Claude bridge into $SETTINGS"
+bridge_cmd="$BRIDGE_DIR/roborev-pre-commit-context.py"
+tmp_settings="$(mktemp "${SETTINGS}.XXXXXX")"
+# Idempotent append-and-dedupe — mirrors claude-config's justfile merge so other
+# PreToolUse hooks (and all other settings) are preserved; re-running dedupes.
+jq --arg cmd "$bridge_cmd" '
+  def dedupe_keep_order: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
+  .hooks = (.hooks // {})
+  | .hooks.PreToolUse = (((.hooks.PreToolUse // []) + [
+      {matcher:"Bash", hooks:[{type:"command", command:$cmd}]}
+    ]) | dedupe_keep_order)
+' "$SETTINGS" > "$tmp_settings"
+mv "$tmp_settings" "$SETTINGS"
+chmod 600 "$SETTINGS"
+log "merged PreToolUse[Bash] roborev bridge into $SETTINGS"
+
 log "seed-roborev install complete — run ref/verify.sh to confirm."
