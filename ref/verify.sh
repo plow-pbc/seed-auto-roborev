@@ -125,7 +125,11 @@ esac
 # the broken hello world. If 0 open findings, the agent missed all 3 bugs —
 # real failure of the loop's value, not just the test.
 if [ -n "$status" ]; then
-  open_now=$("$ROBOREV" list --repo "$tmp" --open --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0)
+  # Count only OPEN FAIL-verdict reviews — the SAME `verdict=="F" && !closed`
+  # contract the bridge + pre-commit hook use (`--open` includes PASS rows, which
+  # are not findings). Counting raw rows would let a PASS-only review satisfy the
+  # loop's "the reviewer flagged the broken code" assertion.
+  open_now=$("$ROBOREV" list --repo "$tmp" --open --json 2>/dev/null | jq '[.[] | select(.verdict=="F" and (.closed | not))] | length' 2>/dev/null || echo 0)
   if [ "${open_now:-0}" -gt 0 ]; then
     ok "^v-loop[findings]: claude-code flagged $open_now open finding(s) on the broken code"
   else

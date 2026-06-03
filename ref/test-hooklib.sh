@@ -56,23 +56,27 @@ chmod +x "$fs_clean"
 out=$( roborev_findings_summary "$fs_clean" 2>&1 )
 assert_contains "$out" "0 open findings on this branch ✓" "findings summary prints the clean line when only PASS rows are open"
 
-# Branch scoping is delegated to roborev's `--branch` (server-side). Assert the
-# helper passes it: a `--branch`-honoring stub returns only the current branch's
-# rows, so a sibling-branch fail is excluded from the count.
+# Repo+branch scoping is delegated to roborev's `--repo`/`--branch` (server-side).
+# Assert the helper passes BOTH: a stub that honors both returns only this repo's
+# rows on this branch — so a sibling-branch fail AND a sibling-repo fail are both
+# excluded. (Dropping either flag would leave one of them in the count.)
 fs_repo="$tmp/fsrepo"; git init -q -b feature/x "$fs_repo"
+fs_root="$(git -C "$fs_repo" rev-parse --show-toplevel)"
 fs_scoped="$tmp/fakeroborev_scoped"
-cat > "$fs_scoped" <<'STUB'
-#!/usr/bin/env bash
-branch=""; shift
-while [ $# -gt 0 ]; do case "$1" in --branch) branch="$2"; shift 2;; *) shift;; esac; done
-all='[{"id":10,"git_ref":"r10","verdict":"F","closed":false,"branch":"feature/x"},
-  {"id":11,"git_ref":"r11","verdict":"F","closed":false,"branch":"other-branch"}]'
-[ -n "$branch" ] && printf '%s' "$all" | jq -c --arg b "$branch" '[.[]|select(.branch==$b)]' || printf '%s' "$all"
+printf '#!/usr/bin/env bash\nFS_ROOT=%q\n' "$fs_root" > "$fs_scoped"
+cat >> "$fs_scoped" <<'STUB'
+repo=""; branch=""; shift
+while [ $# -gt 0 ]; do case "$1" in --repo) repo="$2"; shift 2;; --branch) branch="$2"; shift 2;; *) shift;; esac; done
+all="[{\"id\":10,\"git_ref\":\"r10\",\"verdict\":\"F\",\"closed\":false,\"branch\":\"feature/x\",\"repo\":\"$FS_ROOT\"},
+  {\"id\":11,\"git_ref\":\"r11\",\"verdict\":\"F\",\"closed\":false,\"branch\":\"other-branch\",\"repo\":\"$FS_ROOT\"},
+  {\"id\":12,\"git_ref\":\"r12\",\"verdict\":\"F\",\"closed\":false,\"branch\":\"feature/x\",\"repo\":\"/other/sibling/repo\"}]"
+printf '%s' "$all" | jq -c --arg r "$repo" --arg b "$branch" '[.[]|select((($r=="") or .repo==$r) and (($b=="") or .branch==$b))]'
 STUB
 chmod +x "$fs_scoped"
 out=$( ( cd "$fs_repo"; roborev_findings_summary "$fs_scoped" ) 2>&1 )
-assert_contains "$out" "1 open review finding(s)" "findings summary passes --branch so roborev scopes server-side (sibling excluded)"
+assert_contains "$out" "1 open review finding(s)" "findings summary passes --repo AND --branch (sibling repo + sibling branch both excluded)"
 assert_not_contains "$out" "r11" "findings summary excludes sibling-branch fail rows (via --branch)"
+assert_not_contains "$out" "r12" "findings summary excludes sibling-repo fail rows (via --repo)"
 
 # --- chain_repo_hook: execs a repo-local hook of the same name --------------
 repo="$tmp/repo"; mkdir -p "$repo"; ( cd "$repo" && git init -q )
