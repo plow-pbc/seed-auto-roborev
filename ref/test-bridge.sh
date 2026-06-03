@@ -132,7 +132,7 @@ run_commit_for_fixture() {  # run_commit_for_fixture <fixture_json>
 PEM_BODY='## Review Findings
 - **Severity**: High
 - **Location**: test/file.py:1
-- **Problem**: FAKE FINDING for tests. Leaked token: sk-FAKEsecretSHOULDbeMASKEDxyz789
+- **Problem**: FAKE FINDING for tests. Leaked token: sk-FAKEsecretSHOULDbeMASKEDxyz789 plus github_pat_11ABCDE0aBcDeFgHiJ_kLmNoPqRsTuVwXyZ0123456789AbCdEfGhIjKl
 - **Fix**: do the fake fix.
 ## Summary
 Fake review.'
@@ -191,6 +191,7 @@ assert_not_contains "$ctx" "roborev-review-id=44" "context excludes closed fail 
 assert_not_contains "$ctx" "roborev-review-id=45" "context excludes other-branch fail reviews (branch scoping honored, not branch-blind)"
 # Secret redaction: the fake review body embeds a token-shaped string.
 assert_not_contains "$ctx" "sk-FAKEsecretSHOULDbeMASKEDxyz789" "context redacts token-shaped secrets in review bodies"
+assert_not_contains "$ctx" "github_pat_11ABCDE0aBcDeFgHiJ" "context redacts fine-grained GitHub PATs (github_pat_)"
 assert_contains "$ctx" "redacted secret" "context marks redactions"
 assert_contains "$ctx" "789" "context preserves last-3-chars per CLAUDE.md convention"
 

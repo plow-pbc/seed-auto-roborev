@@ -97,6 +97,7 @@ UNTRUSTED_DATA_WARNING = (
 SECRET_PATTERNS = (
     re.compile(r"\b(sk-[A-Za-z0-9_-]{20,})\b"),                   # OpenAI / Anthropic-style
     re.compile(r"\b(gh[oprsu]_[A-Za-z0-9_]{30,})\b"),             # GitHub PATs (ghp_, gho_, ghu_, ghs_, ghr_)
+    re.compile(r"\b(github_pat_[A-Za-z0-9_]{30,})\b"),             # GitHub fine-grained PATs (github_pat_…)
     re.compile(r"\b(xox[abporst]-[A-Za-z0-9-]{10,})\b"),          # Slack
     re.compile(r"\b((?:AKIA|ASIA)[A-Z0-9]{16,})\b"),             # AWS access key IDs (AKIA/ASIA)
     re.compile(r"\b(eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b"),  # JWT (header.payload.sig, header always starts eyJ for JSON `{"...`)

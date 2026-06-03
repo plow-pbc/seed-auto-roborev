@@ -15,7 +15,7 @@ Software (external system requirements):
 
 Per-OS service manager (user-scope, no sudo): `systemd --user` (Linux) or `launchd` LaunchAgent (macOS).
 
-Run the following block. It is idempotent + fail-loud — asserts the binary, sets the review agent to `claude-code`, installs + starts the daemon as a user-level service, sets the global `core.hooksPath`, delegates the `post-commit`/`post-rewrite` hooks to roborev (one source of truth — no duplicate hook content), writes the SEED's own `pre-commit` results-check (the bit roborev does NOT provide), and installs the Claude Code `PreToolUse[Bash]` context bridge (`^obj-precommit`) — copied to the seed-owned path `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/` and registered into `~/.claude/settings.json` (a `jq` merge that preserves all other settings + dedupes on re-run). System-scope/`sudo` steps (e.g. `loginctl enable-linger` on a headless Linux box) are **surfaced** for the operator to run, never auto-run.
+Run the following block. It is idempotent + fail-loud — asserts the binary, sets the review agent to `claude-code`, installs + starts the daemon as a user-level service, sets the global `core.hooksPath`, delegates `post-rewrite` to roborev via `roborev install-hook --force`, writes the SEED's own `post-commit` + `pre-commit` wrappers (the always-on confirmation lines roborev's stock silent hooks don't provide), and installs the Claude Code `PreToolUse[Bash]` context bridge (`^obj-precommit`) — copied to the seed-owned path `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/` and registered into `~/.claude/settings.json` (a `jq` merge that preserves all other settings + dedupes on re-run). System-scope/`sudo` steps (e.g. `loginctl enable-linger` on a headless Linux box) are **surfaced** for the operator to run, never auto-run.
 
 ```bash
 set -euo pipefail
@@ -53,13 +53,13 @@ The install action:
 - MUST set `^obj-agent`'s value globally: `roborev config set --global default_agent claude-code`. (Idempotent — re-setting the same value is a no-op.)
 - MUST install the daemon as a **user-level** service (systemd `--user` / launchd LaunchAgent — no `sudo`). MUST be idempotent on already-running state: if a roborev daemon is already serving, the install enables the unit for boot durability but does NOT start a colliding second instance.
 - MUST set `git config --global core.hooksPath` to the SEED's hooks directory **only if** that config is unset or already equal to it; if a *different* `core.hooksPath` is set, it MUST stop loudly rather than clobber.
-- MUST delegate `post-commit` + `post-rewrite` ownership to roborev by running `roborev install-hook --force` from within a git repo (the SEED's own clone works) — with `core.hooksPath` already set, roborev writes its hooks to that dir, not to `.git/hooks/`. SHOULD NOT write its own `post-commit` (duplication breaks DRY and causes double-enqueue when roborev later re-installs).
-- MUST write its own `pre-commit` to the hooks dir (no roborev counterpart exists).
+- MUST delegate `post-rewrite` ownership to roborev by running `roborev install-hook --force` from within a git repo (the SEED's own clone works) — with `core.hooksPath` already set, roborev writes its hooks to that dir, not to `.git/hooks/`.
+- MUST then write its own `post-commit` + `pre-commit` wrappers to the hooks dir, OVERWRITING roborev's stock silent `post-commit`: the wrapper still enqueues via `roborev post-commit` (no double-enqueue — only the wrapper runs) but adds the always-on one-line confirmation roborev's stock hook lacks (silent success defeats observability). `pre-commit` has no roborev counterpart.
 - MUST NOT run `sudo`/system-wide installs; any such step (e.g. `loginctl enable-linger`) MUST be surfaced as text for the operator to run.
 
 ### A commit is reviewed ^act-review
 
-- After any `git commit` in any repo on the machine, the `post-commit` hook (roborev-owned) enqueues a review job to `^obj-daemon`. The daemon runs the review via `^obj-agent` (claude-code) and records a verdict in `~/.roborev/reviews.db` (`roborev list` / `roborev show`).
+- After any `git commit` in any repo on the machine, the `post-commit` hook (SEED-owned wrapper, calling `roborev post-commit`) enqueues a review job to `^obj-daemon`. The daemon runs the review via `^obj-agent` (claude-code) and records a verdict in `~/.roborev/reviews.db` (`roborev list` / `roborev show`).
 
 ### Open findings are surfaced before the next commit ^act-check
 
@@ -95,4 +95,4 @@ Any failed check MUST exit nonzero with a `FAIL ^v-…: <reason>` line — no si
 
 ## Open
 
-- **`core.hooksPath` replaces `.git/hooks` wholesale.** roborev's `post-commit` does not chain to any repo-local `post-commit`; the SEED's `pre-commit` does chain to a repo-local `pre-commit`. Repos relying on other local hook types (`post-checkout`, `pre-push`, `commit-msg`, `post-merge`, …) will have those bypassed while `core.hooksPath` is set. At the current operating point no target repo depends on those; if one does, mirror it into the global hooks dir.
+- **`core.hooksPath` replaces `.git/hooks` wholesale.** The SEED's `post-commit` and `pre-commit` wrappers each chain to a repo-local hook of the same name; `post-rewrite` (roborev-owned) does not. Repos relying on other local hook types (`post-checkout`, `pre-push`, `commit-msg`, `post-merge`, …) will have those bypassed while `core.hooksPath` is set. At the current operating point no target repo depends on those; if one does, mirror it into the global hooks dir.
