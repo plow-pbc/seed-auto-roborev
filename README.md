@@ -12,7 +12,7 @@ This SEED is the one-shot installer for that. It wires both halves of the loop m
 - **check results before the next commit** — a SEED-owned git `pre-commit` hook surfaces open findings to stderr (and **always** prints either `roborev: 0 open findings ✓` or `roborev: N open review finding(s)`), so the operator sees on every commit that the check ran. Agent-agnostic (covers claude, codex, humans).
 - **observable on every commit** — both hooks emit a one-line stderr confirmation every time. Silent success is indistinguishable from "roborev never installed"; the always-on lines are how you can tell at a glance that the loop is alive.
 
-Claude Code additionally gets an *earlier*, richer version of the before-commit check via [claude-config](https://github.com/srosro/claude-config)'s `PreToolUse` hook — a complement to the universal git `pre-commit`, not a replacement.
+Claude Code additionally gets an *earlier*, richer version of the before-commit check: the SEED installs a `PreToolUse[Bash]` **context bridge** that injects open findings into the agent's context before it runs `git commit`. It lives at the seed-owned path `~/.config/roborev/claude-hooks/roborev-pre-commit-context.py` and is wired into `~/.claude/settings.json`. Complement to the universal git `pre-commit`, not a replacement — and unlike that warn-only hook, the bridge **hard-blocks** the commit if the roborev binary has gone missing (a broken-install signal, since the SEED guarantees roborev is installed).
 
 ## Install
 

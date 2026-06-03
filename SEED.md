@@ -15,7 +15,7 @@ Software (external system requirements — surfaced, not auto-installed by this 
 
 Per-OS service manager (user-scope, no sudo): `systemd --user` (Linux) or `launchd` LaunchAgent (macOS).
 
-Run the following block. It is idempotent + fail-loud — asserts the binary, sets the review agent to `claude-code`, installs + starts the daemon as a user-level service, sets the global `core.hooksPath`, delegates the `post-commit`/`post-rewrite` hooks to roborev (one source of truth — no duplicate hook content), and writes the SEED's own `pre-commit` results-check (the bit roborev does NOT provide). System-scope/`sudo` steps (e.g. `loginctl enable-linger` on a headless Linux box) are **surfaced** for the operator to run, never auto-run.
+Run the following block. It is idempotent + fail-loud — asserts the binary, sets the review agent to `claude-code`, installs + starts the daemon as a user-level service, sets the global `core.hooksPath`, delegates the `post-commit`/`post-rewrite` hooks to roborev (one source of truth — no duplicate hook content), writes the SEED's own `pre-commit` results-check (the bit roborev does NOT provide), and installs the Claude Code `PreToolUse[Bash]` context bridge (`^obj-precommit`) — copied to the seed-owned path `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/` and registered into `~/.claude/settings.json` (a `jq` merge that preserves all other settings + dedupes on re-run). System-scope/`sudo` steps (e.g. `loginctl enable-linger` on a headless Linux box) are **surfaced** for the operator to run, never auto-run.
 
 ```bash
 set -euo pipefail
@@ -39,9 +39,9 @@ bash "$(dirname "${BASH_SOURCE[0]:-$0}")/ref/install.sh"
   - **`post-commit`** — **owned by this SEED.** A thin wrapper that calls `roborev post-commit` to enqueue the review AND prints a one-line stderr confirmation on every commit (`roborev: enqueued review for <sha> (claude-code)` or `roborev: post-commit FAILED — review NOT enqueued`). The always-on print is intentional — silent success defeats observability; the operator must see proof the hook fired. Chains to any repo-local `post-commit`.
   - **`pre-commit`** — **owned by this SEED.** Lists OPEN roborev reviews for the current repo+branch and **always** prints a one-line stderr summary: `roborev: N open review finding(s) on this branch — review before committing more: …` when findings exist, or `roborev: 0 open findings on this branch ✓` when clean. Warn-only, never blocks. Same observability rationale as post-commit. Chains to any repo-local `pre-commit`.
 
-### Claude-specific pre-commit enhancement ^obj-precommit
+### Claude-specific context bridge ^obj-precommit
 
-- For Claude Code specifically, [claude-config](https://github.com/srosro/claude-config)'s `roborev-pre-commit-context.py` `PreToolUse[Bash]` hook surfaces the same findings *earlier* (before the `git commit` tool call runs, with richer context injection). Complement to `^obj-hook`'s universal `pre-commit`, not a replacement — codex and humans rely on the git-level hook.
+- For Claude Code specifically, **this SEED installs** a `roborev-pre-commit-context.py` `PreToolUse[Bash]` bridge that surfaces the same findings *earlier* — injected into the agent's **context** before the `git commit` tool call runs, with richer detail than the terminal `pre-commit` line. It is copied to the seed-owned path `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py` (NOT `~/.claude/hooks`, which is a symlink into an unrelated config repo) and registered in `~/.claude/settings.json`. Complement to `^obj-hook`'s universal `pre-commit`, not a replacement — codex and humans rely on the git-level hook. Unlike the warn-only git hook, the bridge **hard-blocks** the commit (`permissionDecision: deny`) if the roborev binary has gone missing: the SEED guarantees roborev is installed alongside the bridge, so a missing binary means a broken install and the commit would not be reviewed.
 
 ## Actions
 
@@ -79,6 +79,7 @@ Static checks:
 - **^v-daemon** — `roborev list` round-trips through the daemon.
 - **^v-agent** — `roborev config get default_agent` equals `claude-code`.
 - **^v-hookspath** — `git config --global core.hooksPath` equals the SEED's hooks dir, with both `post-commit` and `pre-commit` (both SEED-owned) executable.
+- **^v-bridge** — the Claude Code context bridge (`^obj-precommit`) is installed executable at `${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py`, is registered as a `PreToolUse[Bash]` entry in `~/.claude/settings.json`, and hard-blocks (`permissionDecision: deny`) a `git commit` when no roborev binary is reachable (broken-install signal).
 
 End-to-end loop check (`^v-loop`) — in one ephemeral throwaway repo it commits a deliberately-broken `app.py` (hardcoded API-key-shaped credential + OS-command-injection via `os.system(input())` + `TypeError` on the happy path) and then a second commit, asserting:
 
