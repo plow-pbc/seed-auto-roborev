@@ -31,17 +31,26 @@ roborev_or_warn() {
 }
 
 # Print the pre-commit open-findings summary to stderr: the count + short list of
-# OPEN FAIL-verdict reviews, or the clean line. Filters `roborev list --open` to
-# `verdict == "F" && !closed` — the SAME contract the Claude bridge uses, because
-# `--open` means "unresolved, ANY verdict" and includes PASS rows, which are NOT
-# findings (counting them raw would over-report "open finding(s)" on a clean branch).
+# OPEN FAIL-verdict reviews on THIS repo+branch, or the clean line. Scoped and
+# filtered to match the Claude bridge exactly so the two surfaces agree:
+#   - pass `--repo`/`--branch` (the bridge's scoping; `roborev list --open` alone
+#     is not reliably branch-scoped, and the wording claims "on this branch");
+#   - keep only `verdict == "F" && !closed` (`--open` includes PASS rows, which
+#     are NOT findings — counting them raw over-reports on a clean branch);
+#   - re-check the branch in jq as defense-in-depth (refs/heads/ normalized; a
+#     row missing the field falls back to the server-side `--branch` scoping).
 roborev_findings_summary() {  # roborev_findings_summary <roborev-path>
-  local rb="$1" fails n
-  fails="$("$rb" list --open --json 2>/dev/null | jq -c '[.[] | select(.verdict=="F" and (.closed | not))]' 2>/dev/null || echo '[]')"
+  local rb="$1" fails n root branch
+  root="$(git rev-parse --show-toplevel 2>/dev/null)"
+  branch="$(git branch --show-current 2>/dev/null)"
+  fails="$("$rb" list --open --json ${root:+--repo "$root"} ${branch:+--branch "$branch"} 2>/dev/null \
+    | jq -c --arg b "$branch" '[.[] | select(.verdict=="F" and (.closed | not)
+        and ((.branch // $b) | sub("^refs/heads/";"") == $b))]' 2>/dev/null || echo '[]')"
   n="$(printf '%s' "$fails" | jq 'length' 2>/dev/null || echo 0)"
   if [ "${n:-0}" -gt 0 ]; then
     echo "roborev: ${n} open review finding(s) on this branch — review before committing more:" >&2
     printf '%s' "$fails" | jq -r '.[] | "  \(.id)  \(.git_ref[0:8] // "?")"' 2>/dev/null | head -20 >&2
+    [ "$n" -gt 20 ] && echo "  … (showing 20 of ${n}; run 'roborev list' for the rest)" >&2
     echo "(roborev show <id> for details; this is a non-blocking warning)" >&2
   else
     echo "roborev: 0 open findings on this branch ✓" >&2
