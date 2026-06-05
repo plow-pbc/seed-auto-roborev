@@ -16,57 +16,57 @@ ROBOREV="$(command -v roborev || true)"
 [ -z "$ROBOREV" ] && [ -x "$HOME/.local/bin/roborev" ] && ROBOREV="$HOME/.local/bin/roborev"
 
 # --- static checks -----------------------------------------------------------
-[ -n "$ROBOREV" ] && ok "^v-binary: roborev at $ROBOREV" || bad "^v-binary: roborev not found"
+[ -n "$ROBOREV" ] && ok "v-binary: roborev at $ROBOREV" || bad "v-binary: roborev not found"
 if [ -n "$ROBOREV" ] && "$ROBOREV" list >/dev/null 2>&1; then
-  ok "^v-daemon: roborev daemon reachable"
+  ok "v-daemon: roborev daemon reachable"
 else
-  bad "^v-daemon: roborev daemon not reachable"
+  bad "v-daemon: roborev daemon not reachable"
 fi
 agent="$([ -n "$ROBOREV" ] && "$ROBOREV" config get default_agent 2>/dev/null | head -1 || echo '?')"
-[ "$agent" = "claude-code" ] && ok "^v-agent: default_agent=$agent" || bad "^v-agent: default_agent='$agent' (expected claude-code)"
+[ "$agent" = "claude-code" ] && ok "v-agent: default_agent=$agent" || bad "v-agent: default_agent='$agent' (expected claude-code)"
 hp="$(git config --global core.hooksPath || true)"
-[ "$hp" = "$HOOKS_DIR" ] && ok "^v-hookspath: core.hooksPath=$HOOKS_DIR" || bad "^v-hookspath: core.hooksPath='$hp' (expected $HOOKS_DIR)"
-[ -x "$HOOKS_DIR/post-commit" ]  && ok "^v-postcommit: post-commit executable (roborev-owned)"   || bad "^v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
-[ -x "$HOOKS_DIR/post-rewrite" ] && ok "^v-postrewrite: post-rewrite executable (roborev-owned)" || bad "^v-postrewrite: $HOOKS_DIR/post-rewrite missing or not executable"
+[ "$hp" = "$HOOKS_DIR" ] && ok "v-hookspath: core.hooksPath=$HOOKS_DIR" || bad "v-hookspath: core.hooksPath='$hp' (expected $HOOKS_DIR)"
+[ -x "$HOOKS_DIR/post-commit" ]  && ok "v-postcommit: post-commit executable (roborev-owned)"   || bad "v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
+[ -x "$HOOKS_DIR/post-rewrite" ] && ok "v-postrewrite: post-rewrite executable (roborev-owned)" || bad "v-postrewrite: $HOOKS_DIR/post-rewrite missing or not executable"
 # No orphaned wrappers from a prior seed version (the installer removes them).
-[ ! -e "$HOOKS_DIR/pre-commit" ]         && ok "^v-nostale[pre-commit]: no orphaned seed pre-commit wrapper" || bad "^v-nostale[pre-commit]: stale $HOOKS_DIR/pre-commit from a prior seed — re-run install.sh"
-[ ! -e "$HOOKS_DIR/roborev-hooklib.sh" ] && ok "^v-nostale[hooklib]: no orphaned roborev-hooklib.sh"        || bad "^v-nostale[hooklib]: stale $HOOKS_DIR/roborev-hooklib.sh from a prior seed — re-run install.sh"
+[ ! -e "$HOOKS_DIR/pre-commit" ]         && ok "v-nostale[pre-commit]: no orphaned seed pre-commit wrapper" || bad "v-nostale[pre-commit]: stale $HOOKS_DIR/pre-commit from a prior seed — re-run install.sh"
+[ ! -e "$HOOKS_DIR/roborev-hooklib.sh" ] && ok "v-nostale[hooklib]: no orphaned roborev-hooklib.sh"        || bad "v-nostale[hooklib]: stale $HOOKS_DIR/roborev-hooklib.sh from a prior seed — re-run install.sh"
 
-# --- ^v-bridge — Claude Code context bridge (seed-owned PreToolUse[Bash]) -----
+# --- v-bridge — Claude Code context bridge (seed-owned PreToolUse[Bash]) -----
 BRIDGE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-commit-context.py"
-[ -x "$BRIDGE" ] && ok "^v-bridge[file]: installed at $BRIDGE" || bad "^v-bridge[file]: missing/not-exec at $BRIDGE"
+[ -x "$BRIDGE" ] && ok "v-bridge[file]: installed at $BRIDGE" || bad "v-bridge[file]: missing/not-exec at $BRIDGE"
 if [ -f "$HOME/.claude/settings.json" ] && \
    jq -e --arg b "$BRIDGE" 'any(.hooks.PreToolUse[]?;
      .matcher == "Bash" and
      any(.hooks[]?; .type == "command" and .command == $b))' \
    "$HOME/.claude/settings.json" >/dev/null 2>&1; then
-  ok "^v-bridge[settings]: PreToolUse[Bash] entry present in ~/.claude/settings.json"
+  ok "v-bridge[settings]: PreToolUse[Bash] entry present in ~/.claude/settings.json"
 else
-  bad "^v-bridge[settings]: PreToolUse[Bash] roborev entry NOT found in ~/.claude/settings.json"
+  bad "v-bridge[settings]: PreToolUse[Bash] roborev entry NOT found in ~/.claude/settings.json"
 fi
 hb_repo="$(mktemp -d)"; ( cd "$hb_repo" && git init -q )
 hb_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"},"cwd":"%s"}' "$hb_repo" \
   | HOME="$(mktemp -d)" PATH="/usr/bin:/bin" "$BRIDGE" 2>/dev/null)
 printf '%s' "$hb_out" | jq -e '.hookSpecificOutput.additionalContext | contains("ref/install.sh")' >/dev/null 2>&1 \
-  && ok "^v-bridge[warn]: warns into context when roborev binary is missing" \
-  || bad "^v-bridge[warn]: did NOT warn on missing roborev binary"
+  && ok "v-bridge[warn]: warns into context when roborev binary is missing" \
+  || bad "v-bridge[warn]: did NOT warn on missing roborev binary"
 rm -rf "$hb_repo"
 
-# --- ^v-gate — Claude Code pre-push gate (seed-owned PreToolUse[Bash]) --------
+# --- v-gate — Claude Code pre-push gate (seed-owned PreToolUse[Bash]) --------
 HOOKLIB="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/_roborev_hooklib.py"
 GATE="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-push-gate.py"
-[ -f "$HOOKLIB" ] && ok "^v-lib: shared hooklib installed at $HOOKLIB" || bad "^v-lib: missing at $HOOKLIB (bridge + gate import it)"
-[ -x "$GATE" ] && ok "^v-gate[file]: installed at $GATE" || bad "^v-gate[file]: missing/not-exec at $GATE"
+[ -f "$HOOKLIB" ] && ok "v-lib: shared hooklib installed at $HOOKLIB" || bad "v-lib: missing at $HOOKLIB (bridge + gate import it)"
+[ -x "$GATE" ] && ok "v-gate[file]: installed at $GATE" || bad "v-gate[file]: missing/not-exec at $GATE"
 if [ -f "$HOME/.claude/settings.json" ] && \
    jq -e --arg g "$GATE" 'any(.hooks.PreToolUse[]?;
      .matcher == "Bash" and
      any(.hooks[]?; .type == "command" and .command == $g and .timeout == 660))' \
    "$HOME/.claude/settings.json" >/dev/null 2>&1; then
-  ok "^v-gate[settings]: PreToolUse[Bash] gate entry present (timeout 660)"
+  ok "v-gate[settings]: PreToolUse[Bash] gate entry present (timeout 660)"
 else
-  bad "^v-gate[settings]: PreToolUse[Bash] gate entry (timeout 660) NOT found in ~/.claude/settings.json"
+  bad "v-gate[settings]: PreToolUse[Bash] gate entry (timeout 660) NOT found in ~/.claude/settings.json"
 fi
-# ^v-gate[allow]: a non-push Bash command must be allowed — AND the gate must
+# v-gate[allow]: a non-push Bash command must be allowed — AND the gate must
 # exit cleanly. Capture stderr + status so a silent CRASH (import error, missing
 # python3 under the stripped PATH, any unhandled exception) can't masquerade as
 # "allowed" by also producing empty stdout.
@@ -74,28 +74,28 @@ ga_cwd="$(mktemp -d)"; ga_home="$(mktemp -d)"; ga_err="$(mktemp)"
 ga_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"ls -la"},"cwd":"%s"}' "$ga_cwd" \
   | HOME="$ga_home" PATH="/usr/bin:/bin" "$GATE" 2>"$ga_err"); ga_rc=$?
 if [ "$ga_rc" -eq 0 ] && [ -z "$ga_out" ] && [ ! -s "$ga_err" ]; then
-  ok "^v-gate[allow]: non-push Bash command is allowed (clean exit, no deny)"
+  ok "v-gate[allow]: non-push Bash command is allowed (clean exit, no deny)"
 else
-  bad "^v-gate[allow]: gate did not cleanly allow (rc=$ga_rc, stdout='$ga_out', stderr='$(cat "$ga_err")')"
+  bad "v-gate[allow]: gate did not cleanly allow (rc=$ga_rc, stdout='$ga_out', stderr='$(cat "$ga_err")')"
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
-# --- ^v-skill — Claude Code roborev usage skill ------------------------------
+# --- v-skill — Claude Code roborev usage skill ------------------------------
 SKILL="$HOME/.claude/skills/roborev/SKILL.md"
 # Assert the FIRST frontmatter block (line 1 `---`, line 2 `name: roborev`) — not
 # just `name: roborev` matched anywhere, which malformed YAML could satisfy.
 if [ -f "$SKILL" ] && [ "$(sed -n 1p "$SKILL")" = "---" ] && [ "$(sed -n 2p "$SKILL")" = "name: roborev" ]; then
-  ok "^v-skill: roborev usage skill installed with valid frontmatter at $SKILL"
+  ok "v-skill: roborev usage skill installed with valid frontmatter at $SKILL"
 else
-  bad "^v-skill: roborev skill missing or malformed at $SKILL (expected line 1 '---', line 2 'name: roborev')"
+  bad "v-skill: roborev skill missing or malformed at $SKILL (expected line 1 '---', line 2 'name: roborev')"
 fi
 
-# --- ^v-loop — end-to-end loop test ------------------------------------------
+# --- v-loop — end-to-end loop test ------------------------------------------
 # Drives the full feedback loop: ephemeral repo → broken hello-world commit →
 # wait for review → confirm the open fail-verdict finding surfaces via
 # `roborev list`. Requires all static checks above to have passed.
 if [ "$fails" -ne 0 ] || [ -z "$ROBOREV" ]; then
-  bad "^v-loop: skipped — preconditions failed above"
+  bad "v-loop: skipped — preconditions failed above"
   printf '\n%d check(s) FAILED\n' "$fails" >&2; exit 1
 fi
 
@@ -129,17 +129,17 @@ git add app.py
 git commit -q -m "seed-verify broken hello world"
 sha1=$(git rev-parse --short HEAD)
 
-# ^v-loop[enqueued]: roborev's post-commit hook enqueued a review for this repo.
+# v-loop[enqueued]: roborev's post-commit hook enqueued a review for this repo.
 jobs_json="$("$ROBOREV" list --repo "$tmp" --json 2>/dev/null || echo '[]')"
 job_id=$(printf '%s' "$jobs_json" | jq '.[0].id // empty' 2>/dev/null)
 job_agent=$(printf '%s' "$jobs_json" | jq -r '.[0].agent // "?"' 2>/dev/null)
 if [ -n "$job_id" ]; then
-  ok "^v-loop[enqueued]: post-commit enqueued job=$job_id agent=$job_agent for $sha1"
+  ok "v-loop[enqueued]: post-commit enqueued job=$job_id agent=$job_agent for $sha1"
 else
-  bad "^v-loop[enqueued]: NO job enqueued for the broken-hello-world commit (post-commit hook fired?)"
+  bad "v-loop[enqueued]: NO job enqueued for the broken-hello-world commit (post-commit hook fired?)"
 fi
 
-# ^v-loop[complete]: poll up to 4 minutes for the review to reach a terminal
+# v-loop[complete]: poll up to 4 minutes for the review to reach a terminal
 # status. claude-code reviews of trivial diffs typically finish in 30–90s.
 deadline=$(($(date +%s) + 240))
 status=""
@@ -149,11 +149,11 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
   sleep 5
 done
 case "$status" in
-  done|passed|failed) ok "^v-loop[complete]: review reached status=$status (job $job_id)" ;;
-  *) bad "^v-loop[complete]: review did not reach a terminal status within 240s (status=$status; job=$job_id)"; status= ;;
+  done|passed|failed) ok "v-loop[complete]: review reached status=$status (job $job_id)" ;;
+  *) bad "v-loop[complete]: review did not reach a terminal status within 240s (status=$status; job=$job_id)"; status= ;;
 esac
 
-# ^v-loop[findings]: the reviewer should have flagged at least one issue in
+# v-loop[findings]: the reviewer should have flagged at least one issue in
 # the broken hello world. If 0 open findings, the agent missed all 3 bugs —
 # real failure of the loop's value, not just the test.
 if [ -n "$status" ]; then
@@ -163,9 +163,9 @@ if [ -n "$status" ]; then
   # loop's "the reviewer flagged the broken code" assertion.
   open_now=$("$ROBOREV" list --repo "$tmp" --open --json 2>/dev/null | jq '[.[] | select(.verdict=="F" and (.closed | not))] | length' 2>/dev/null || echo 0)
   if [ "${open_now:-0}" -gt 0 ]; then
-    ok "^v-loop[findings]: claude-code flagged $open_now open finding(s) on the broken code"
+    ok "v-loop[findings]: claude-code flagged $open_now open finding(s) on the broken code"
   else
-    bad "^v-loop[findings]: claude-code reviewed but found 0 open findings on intentionally-broken code (review job $job_id — 'roborev show $job_id' for the verdict)"
+    bad "v-loop[findings]: claude-code reviewed but found 0 open findings on intentionally-broken code (review job $job_id — 'roborev show $job_id' for the verdict)"
   fi
 fi
 
