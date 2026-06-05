@@ -46,7 +46,6 @@ import sys
 from _roborev_hooklib import (
     _resolve_repo_cwd,
     _find_roborev,
-    _inside_git_repo,
     _current_branch,
     _git_toplevel,
     _list_jobs,
@@ -135,9 +134,11 @@ def main() -> int:
         return 0
 
     # Binary present -> surface open fail-verdict findings (informational, never
-    # blocks). Needs the repo root + branch; bail quietly if we can't resolve them.
-    if not _inside_git_repo(cwd):
-        return 0
+    # blocks). Needs the repo root + branch; bail quietly if we can't resolve
+    # them. `_git_toplevel` returns "" outside a work tree, so the `not repo_root`
+    # check already covers the not-a-repo case — no separate `_inside_git_repo`
+    # probe needed here (the pre-push gate still uses it, where it IS the first
+    # repo check).
     repo_root = _git_toplevel(cwd)
     branch = _current_branch(cwd)
     if not repo_root or not branch:

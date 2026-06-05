@@ -82,4 +82,30 @@ assert_eq "0" "$([ -e "$root/curl-urls" ] && echo 1 || echo 0)" "unsupported arc
 assert_eq "0" "$([ -e "$root/home/.local/bin/roborev" ] && echo 1 || echo 0)" "unsupported arch installs nothing"
 rm -rf "$root"
 
+# --- Case 4: §3 Linux daemon unit keeps `claude` literal, never executes it ----
+# The systemd unit is written via an UNQUOTED `<<UNIT` heredoc (it must expand
+# $HOME/$ROBOREV), so the `claude` in the PATH-rationale comment MUST be
+# backslash-escaped — otherwise bash command-substitutes it at INSTALL time
+# (the regression this PR fixes: arbitrary `claude` exec while writing the unit).
+# Reach §3, then fail the FIRST post-write command (systemctl) so `set -e` aborts
+# install.sh right after the unit is written — pinning the check to §3 alone, with
+# no coupling to later host deps (§6's jq etc.). Mirrors Case 2's §2-boundary pin.
+root="$(mktemp -d)"; stub="$root/bin"; mkdir -p "$stub" "$root/home"
+printf '#!/bin/sh\nexit 0\n' > "$stub/roborev"
+# claude canary: on PATH so a command-substituting heredoc WOULD invoke it; it
+# logs to $root/claude-ran when executed. The escaped heredoc must leave it empty.
+printf '#!/bin/sh\necho ran >> "%s/claude-ran"\n' "$root" > "$stub/claude"
+# systemctl is the first command after the heredoc write; fail it to stop install.sh
+# at the §3 boundary before §4+ (git, jq, …) are ever reached.
+printf '#!/bin/sh\nexit 1\n' > "$stub/systemctl"
+printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; *) echo Linux;; esac\n' > "$stub/uname"
+chmod +x "$stub"/*
+HOME="$root/home" PATH="$stub:$PATH" bash "$HERE/install.sh" >/dev/null 2>&1; RC=$?
+unit="$root/home/.config/systemd/user/roborev-daemon.service"
+assert_eq "1" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)" "install stops at the §3 boundary (no §6 host-dep coupling)"
+assert_eq "1" "$([ -f "$unit" ] && echo 1 || echo 0)" "§3 generated the daemon unit before the boundary"
+assert_contains "$(cat "$unit" 2>/dev/null)" '`claude`' "unit keeps the literal backticked claude (not command-substituted)"
+assert_eq "0" "$([ -e "$root/claude-ran" ] && echo 1 || echo 0)" "claude was NOT executed at install time (no command substitution)"
+rm -rf "$root"
+
 assert_summary
