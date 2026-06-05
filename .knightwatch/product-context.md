@@ -14,4 +14,4 @@ Operating point (org default):
 - **Spec rigidity:** the SEED prose IS the contract; a handled edge case the
   spec never asked for is a cost, not a feature.
 
-**This repo's `ref/` payload:** Python git hooks (pre-commit, pre-push, shared hooklib) plus a bash install/test/verify harness.
+**This repo's `ref/` payload:** Python Claude Code `PreToolUse[Bash]` hooks (commit context bridge, pre-push gate, shared hooklib) plus a bash install/test/verify harness. (roborev owns the actual git hooks — `post-commit`/`post-rewrite`, installed via `roborev install-hook` — not shipped in `ref/`.)
