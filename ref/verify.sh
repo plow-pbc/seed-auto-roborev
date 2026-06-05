@@ -99,7 +99,10 @@ if [ "$fails" -ne 0 ] || [ -z "$ROBOREV" ]; then
   printf '\n%d check(s) FAILED\n' "$fails" >&2; exit 1
 fi
 
-tmp="$(mktemp -d)"
+# pwd -P canonicalizes the path: on macOS `mktemp -d` returns a /var/... symlink
+# to /private/var/..., but git (and thus roborev) records the resolved path, so a
+# raw "$tmp" passed to `roborev list --repo` (below) wouldn't match the stored job.
+tmp="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$tmp"' EXIT
 cd "$tmp"
 git init -q
