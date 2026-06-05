@@ -82,4 +82,29 @@ assert_eq "0" "$([ -e "$root/curl-urls" ] && echo 1 || echo 0)" "unsupported arc
 assert_eq "0" "$([ -e "$root/home/.local/bin/roborev" ] && echo 1 || echo 0)" "unsupported arch installs nothing"
 rm -rf "$root"
 
+# --- Case 4: §3 Linux daemon unit keeps `claude` literal, never executes it ----
+# The systemd unit is written via an UNQUOTED `<<UNIT` heredoc (it must expand
+# $HOME/$ROBOREV), so the `claude` in the PATH-rationale comment MUST be
+# backslash-escaped — otherwise bash command-substitutes it at INSTALL time
+# (the regression this PR fixes: arbitrary `claude` exec while writing the unit).
+# Drives a full hermetic Linux install (service-manager surface stubbed, $HOME
+# sandboxed, roborev+claude pre-seeded so §1 skips fetch/bootstrap) and asserts
+# the unit contains the literal `claude` AND the claude canary never ran.
+root="$(mktemp -d)"; stub="$root/bin"; mkdir -p "$stub" "$root/home"
+printf '#!/bin/sh\nexit 0\n' > "$stub/roborev"
+# claude canary: on PATH so a command-substituting heredoc WOULD invoke it; it
+# logs to $root/claude-ran when executed. The escaped heredoc must leave it empty.
+printf '#!/bin/sh\necho ran >> "%s/claude-ran"\n' "$root" > "$stub/claude"
+# Neuter the per-user service-manager + git surface so §3-§5 touch nothing on the host.
+for c in systemctl loginctl pkill sleep git; do printf '#!/bin/sh\nexit 0\n' > "$stub/$c"; done
+printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; *) echo Linux;; esac\n' > "$stub/uname"
+chmod +x "$stub"/*
+HOME="$root/home" PATH="$stub:$PATH" bash "$HERE/install.sh" >/dev/null 2>&1; RC=$?
+unit="$root/home/.config/systemd/user/roborev-daemon.service"
+assert_eq "0" "$RC" "full Linux install completes hermetically"
+assert_eq "1" "$([ -f "$unit" ] && echo 1 || echo 0)" "§3 generated the daemon unit"
+assert_contains "$(cat "$unit" 2>/dev/null)" '`claude`' "unit keeps the literal backticked claude (not command-substituted)"
+assert_eq "0" "$([ -e "$root/claude-ran" ] && echo 1 || echo 0)" "claude was NOT executed at install time (no command substitution)"
+rm -rf "$root"
+
 assert_summary
