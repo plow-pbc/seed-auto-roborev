@@ -82,7 +82,7 @@ After=default.target
 [Service]
 # The daemon spawns agent CLIs (claude, codex, …). systemd --user starts the
 # unit with a minimal PATH (no ~/.local/bin), so without this override the
-# daemon would 503 with "no review agent available" even when `claude` IS
+# daemon would 503 with "no review agent available" even when \`claude\` IS
 # installed user-scope. Mirror the macOS plist below.
 Environment=PATH=$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$ROBOREV daemon run
