@@ -1,6 +1,6 @@
 ---
 name: roborev
-description: Use when committing or pushing code on a machine where roborev is installed (the seed-auto-roborev review loop) — covers the workflow contract (let reviews finish before pushing, fix or close fail-verdict findings, never push over an unread verdict=F) and the roborev command usage (status / list / show / wait / close). Triggers on git commit/push, a pre-push gate denial, a pre-commit context warning, or "roborev findings".
+description: Use when committing or pushing code on a machine where roborev is installed (the seed-auto-roborev review loop) — covers the workflow contract (triage findings at commit time, fix or close every fail-verdict finding, never push over an unread verdict=F) and the roborev command usage (status / list / show / wait / close). Triggers on git commit/push, a pre-push gate denial, a pre-commit context warning, or "roborev findings".
 ---
 
 # roborev — the always-on local review loop
@@ -19,11 +19,12 @@ The gate is Claude-only and bypassable on a box you control — it's a workflow 
 
 ## The contract — what you MUST do
 
-**Before `git push`, let the branch's in-flight roborev reviews finish, then act on every fail-verdict finding:**
+**When the pre-commit bridge surfaces open fail-verdict findings, triage each one immediately — don't defer to push.** Categorize EACH finding out loud as exactly one of:
 
-- **Fix** the valid ones.
-- **`roborev close <id>`** (with a reason) the ones you decline — e.g. a finding whose remedy would add a defensive branch / fallback / wrapper for a scenario that can't happen at the current operating point. Declining is legitimate; **silently leaving it open is not** — an open `verdict=F` blocks the gate and means the finding is unread, not judged.
-- **Never push over an unread `verdict=F`.** A green push is not proof you read the findings.
+- **INVALID** (not a real problem) or **VALID-BUT-YAGNI** (real, but the only remedy adds a guard / branch / fallback / wrapper for a case that can't happen at the current operating point) → `roborev comment <id> -m "<why>"` then `roborev close <id>`. Declining is legitimate; **silently leaving it open is not** — an open `verdict=F` blocks the push gate and means the finding is unread, not judged.
+- **VALID** (a real bug or a genuine simplification) → fix it in the **very next commit** on the branch (its own follow-up commit, before other feature work), then `roborev close <id>`.
+
+**Never push over an unread `verdict=F`.** The pre-push gate is the backstop hard stop, but clearing findings at commit time keeps the eventual push unblocked — and a green push is not proof you read the findings.
 
 Clearing roborev before push means each later PR-review round (knightwatch) is worth its token cost instead of re-flagging what this local pass already caught.
 
