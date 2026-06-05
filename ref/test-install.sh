@@ -99,6 +99,11 @@ printf '#!/bin/sh\necho ran >> "%s/claude-ran"\n' "$root" > "$stub/claude"
 for c in systemctl loginctl pkill sleep git; do printf '#!/bin/sh\nexit 0\n' > "$stub/$c"; done
 printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; *) echo Linux;; esac\n' > "$stub/uname"
 chmod +x "$stub"/*
+# This is the only case that runs install.sh to completion, so it inherits the
+# installer's real host deps — notably jq (§6's settings.json merge). A jq-less
+# box makes install.sh fail() and shows up as the "completes hermetically"
+# assertion below, not a "jq missing" signal; jq isn't stubbed because it does
+# real work here (a no-op stub would silently write an empty settings.json).
 HOME="$root/home" PATH="$stub:$PATH" bash "$HERE/install.sh" >/dev/null 2>&1; RC=$?
 unit="$root/home/.config/systemd/user/roborev-daemon.service"
 assert_eq "0" "$RC" "full Linux install completes hermetically"
