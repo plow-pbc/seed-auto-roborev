@@ -19,23 +19,27 @@ The gate is Claude-only and bypassable on a box you control — it's a workflow 
 
 ## The contract — what you MUST do
 
+**A finished review is NOT a cleared finding.** A verdict landing (the daemon finishing the job) means the review *ran* — it does NOT mean the finding is addressed. A `verdict=F` review stays in the open set, blocking the push gate, until you **explicitly `roborev close <id>`** — after fixing it, or after recording a decline reason with `roborev comment <id> -m "<why>"`. Finishing the commit, the feature, or the PR does **not** clear it; only `roborev close` does. (Older guidance framed reviews as "already completed by push time" — completed ≠ cleared; treat that as "ran early," never "handled.")
+
 **When the pre-commit bridge surfaces open fail-verdict findings, triage each one immediately — don't defer to push.** Categorize EACH finding out loud as exactly one of:
 
 - **INVALID** (not a real problem) or **VALID-BUT-YAGNI** (real, but the only remedy adds a guard / branch / fallback / wrapper for a case that can't happen at the current operating point) → `roborev comment <id> -m "<why>"` then `roborev close <id>`. Declining is legitimate; **silently leaving it open is not** — an open `verdict=F` blocks the push gate and means the finding is unread, not judged.
 - **VALID** (a real bug or a genuine simplification) → fix it in the **very next commit** on the branch (its own follow-up commit, before other feature work), then `roborev close <id>`.
 
-**Never push over an unread `verdict=F`.** The pre-push gate is the backstop hard stop, but clearing findings at commit time keeps the eventual push unblocked — and a green push is not proof you read the findings.
+**Drain before every push, and again at task / PR handoff.** Run `roborev list --open`, resolve every `verdict=F` (fix-then-close, or comment-then-close), and leave **zero** open fail-verdict reviews. **Never push over an open or unread `verdict=F`** — the pre-push gate is the backstop hard stop, but draining at commit time and at handoff keeps the eventual push unblocked, and a green push is not proof you read the findings. The open-FAIL set is **shared repo-wide across every checkout and branch** (one `~/.roborev/reviews.db` per machine), so a finding another agent or another clone left open is *yours* to drain too when it lands on the branch you push.
+
+**Branch-scoping orphans findings — this is the load-bearing caveat.** `roborev list`, the pre-commit bridge, and the pre-push gate are all scoped to the **current repo + current branch** (the hooks call `roborev list --repo <root> --branch <branch>`), and a finding lands on whatever branch the commit was made on. **Switching branches, or working in another clone/repo, makes the open findings on the branch you left invisible — they don't disappear, they just stop showing up until you check that branch out again.** There is **no `--all` / all-branches / all-repos view** today, so a clean `roborev list --open` on your *current* branch can read as "all clear" while `verdict=F` reviews pile up unseen on other branches and clones. Sweep **per branch** (check each branch you've committed on before you call a task done), and periodically check the broader backlog by revisiting those branches — don't trust a single branch's clean read as machine-wide clear. *(A real `roborev list --all` spanning branches/repos would make this sweep one command; today it must be done per-branch — noting as a future improvement, not current behavior.)*
 
 Clearing roborev before push means each later PR-review round (knightwatch) is worth its token cost instead of re-flagging what this local pass already caught.
 
-**Commit often, in small reviewable increments.** Each commit triggers its own review, so small commits mean those reviews run *while you keep working* and have already completed by the time you push — findings surface early, each review is sharper (less diff), and the push isn't left waiting on in-flight reviews.
+**Commit often, in small reviewable increments.** Each commit triggers its own review, so small commits mean those reviews run *while you keep working* and have already landed by the time you push — findings surface early, each review is sharper (less diff), and the push isn't left waiting on in-flight reviews. (Landing early is not the same as being cleared — you still close each one per the contract above.)
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `roborev status` | Daemon health + queue depth. |
-| `roborev list --open` | Unresolved *reviews* for the repo+branch — **any** verdict, including PASS rows, so not all of them are findings. The **actionable** ones are unclosed fail-verdict reviews (`verdict=F`) — what the bridge and gate act on. Add `--json` and filter `verdict=="F"` to list just those. |
+| `roborev list --open` | Unresolved *reviews* for the **current repo + current branch only** — **any** verdict, including PASS rows, so not all of them are findings. The **actionable** ones are unclosed fail-verdict reviews (`verdict=F`) — what the bridge and gate act on. Add `--json` and filter `verdict=="F"` to list just those. There is no all-branches/all-repos view, so a clean read here does NOT mean the machine is clear (see *Branch-scoping orphans findings* above) — sweep each branch you've committed on. |
 | `roborev show <id>` | Read a specific finding (job ID, or a commit SHA / `HEAD`). |
 | `roborev wait` | Block until HEAD's review lands — token-efficient; use this instead of polling before a push. |
 | `roborev close <id>` | Mark a finding resolved/declined. |
