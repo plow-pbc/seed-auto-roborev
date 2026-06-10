@@ -192,7 +192,12 @@ install -m 0644 "$SEED_REPO/ref/_roborev_hooklib.py"           "$BRIDGE_DIR/_rob
 install -m 0755 "$SEED_REPO/ref/roborev-pre-commit-context.py" "$BRIDGE_DIR/roborev-pre-commit-context.py"
 install -m 0755 "$SEED_REPO/ref/roborev-pre-push-gate.py"      "$BRIDGE_DIR/roborev-pre-push-gate.py"
 install -m 0755 "$SEED_REPO/ref/roborev-pre-checkout-gate.py"  "$BRIDGE_DIR/roborev-pre-checkout-gate.py"
-log "installed Claude hooks (commit bridge + pre-push gate + pre-checkout gate + shared lib) -> $BRIDGE_DIR"
+# `roborev list --all` seed helper — the machine-wide open-FAIL backlog view the
+# upstream CLI lacks. Installed alongside the hooks (it imports the same shared
+# `_roborev_hooklib` for the open-finding definition) so the agent can run the
+# cross-branch sweep by hand: `python3 $BRIDGE_DIR/roborev-list-all.py`.
+install -m 0755 "$SEED_REPO/ref/roborev-list-all.py"          "$BRIDGE_DIR/roborev-list-all.py"
+log "installed Claude hooks (commit bridge + pre-push gate + pre-checkout gate + backlog helper + shared lib) -> $BRIDGE_DIR"
 
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"

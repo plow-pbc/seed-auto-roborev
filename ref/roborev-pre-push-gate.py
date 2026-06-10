@@ -60,6 +60,9 @@ from _roborev_hooklib import (
     _is_open_fail,
     _in_flight,
     _deny,
+    _emit_hook,
+    open_fail_backlog,
+    format_backlog_summary,
 )
 
 # How long to wait for in-flight reviews. Fixed — under the installer's
@@ -80,6 +83,23 @@ _LIST_FAIL_REASON = (
 
 def _allow() -> int:
     return 0  # exit 0, no stdout → normal permission flow proceeds
+
+
+def _allow_with_backlog() -> int:
+    """The happy-path allow: this branch is clear (current-branch deny already
+    ruled out), so surface the MACHINE-WIDE open-FAIL backlog as non-blocking
+    `additionalContext` and nudge the agent to sweep the stale ones.
+
+    NON-BLOCKING by construction: it emits NO `permissionDecision`, so the push
+    proceeds regardless of what other branches hold — the hard deny stays
+    strictly current-branch-only (other-branch FAILs must never wedge a push).
+    A None/empty backlog (read failure or nothing open) is a silent clean allow —
+    the informational surface is best-effort and never costs a push."""
+    backlog = open_fail_backlog()
+    if not backlog:
+        return _allow()
+    _emit_hook({"additionalContext": format_backlog_summary(backlog)})
+    return 0
 
 
 def _wait_for(roborev: str, repo_root: str, ids: list[int]) -> bool:
@@ -203,7 +223,10 @@ def main() -> int:
                 "re-run the push once they finish (`roborev status`)."
             )
 
-    return _allow()
+    # This branch is clear. Surface the machine-wide backlog (non-blocking) so
+    # the agent can sweep stale FAILs on OTHER branches it's moved off of — the
+    # visibility half the current-branch deny structurally can't cover.
+    return _allow_with_backlog()
 
 
 if __name__ == "__main__":
