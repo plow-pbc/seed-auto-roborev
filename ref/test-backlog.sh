@@ -151,6 +151,30 @@ other_line=$(printf '%s\n' "$mark_out" | grep "feat/other")
 assert_contains "$clean_line" "current branch" "pushed branch (feat/clean) IS marked as current"
 assert_not_contains "$other_line" "current branch" "sibling branch (feat/other) of the same repo is NOT mis-marked as current"
 
+# Same-basename, different-root sibling clones (the ~/Hacking/<repo> vs
+# ~/services/<repo> dual-clone pattern) on the SAME branch must NOT collapse:
+# only the pushed ROOT is marked, not the same-named clone at another path.
+dual_out=$(REF="$REF" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REF"])
+from _roborev_hooklib import format_backlog_summary
+backlog = [
+    {"repo": "plow", "root_path": "/home/u/Hacking/plow",  "branch": "main", "id": 700},
+    {"repo": "plow", "root_path": "/home/u/services/plow", "branch": "main", "id": 701},
+]
+out = format_backlog_summary(backlog, current_repo_root="/home/u/Hacking/plow", current_branch="main")
+# Tag each line with its sole id so the two same-name/same-branch rows stay
+# distinguishable in the rendered output.
+for line in out.splitlines():
+    if "#700" in line: print("HACKING:" + line)
+    if "#701" in line: print("SERVICES:" + line)
+PY
+)
+hacking_line=$(printf '%s\n' "$dual_out" | grep '^HACKING:')
+services_line=$(printf '%s\n' "$dual_out" | grep '^SERVICES:')
+assert_contains "$hacking_line" "current branch" "pushed clone (~/Hacking/plow) IS marked as current"
+assert_not_contains "$services_line" "current branch" "same-name sibling clone (~/services/plow) on the same branch is NOT mis-marked"
+
 # When the backlog is empty, the allow path stays a SILENT clean allow (no JSON).
 sqlite3 "$DB" "UPDATE reviews SET closed=1;"
 out=$(printf '%s' "$payload" | python3 "$GATE"); rc=$?
