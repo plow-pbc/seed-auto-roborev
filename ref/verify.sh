@@ -80,6 +80,19 @@ else
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
+# --- v-listall — `roborev list --all` backlog helper (seed-owned) ------------
+# The machine-wide open-FAIL backlog view the upstream CLI lacks. Installed
+# alongside the hooks; reads ~/.roborev/reviews.db read-only. Smoke it against
+# an empty mocked HOME (no DB) — it must exit 1 (couldn't look), the distinct
+# "DB unreadable" status, NOT crash or hang.
+LISTALL="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-list-all.py"
+[ -x "$LISTALL" ] && ok "v-listall[file]: backlog helper installed at $LISTALL" || bad "v-listall[file]: missing/not-exec at $LISTALL"
+la_home="$(mktemp -d)"
+HOME="$la_home" python3 "$LISTALL" >/dev/null 2>&1; la_rc=$?
+[ "$la_rc" -eq 1 ] && ok "v-listall[run]: helper exits 1 on an unreadable DB (clean 'couldn't look', no crash)" \
+  || bad "v-listall[run]: helper rc=$la_rc on a missing DB (expected 1 — couldn't-look status)"
+rm -rf "$la_home"
+
 # --- v-skill — Claude Code roborev usage skill ------------------------------
 SKILL="$HOME/.claude/skills/roborev/SKILL.md"
 # Assert the FIRST frontmatter block (line 1 `---`, line 2 `name: roborev`) — not
