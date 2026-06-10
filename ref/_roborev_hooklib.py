@@ -285,26 +285,15 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
     return [dict(r) for r in rows if not _is_ephemeral_repo(r["root_path"])]
 
 
-def format_backlog_summary(
-    backlog: list[dict], current_repo_root: str = "", current_branch: str = ""
-) -> str:
+def format_backlog_summary(backlog: list[dict]) -> str:
     """Render `open_fail_backlog()` output as a compact `repo  branch  count/ids`
     block for the pre-push gate's non-blocking surface, plus the active-vs-stale
-    cleanup nudge. Empty backlog → "" (caller emits nothing).
-
-    Groups by (root_path, branch) — keyed on ROOT, not repo name — and marks the
-    EXACT (current_repo_root, current_branch) being pushed as already-covered by
-    the hard gate. Root-granular on both axes is load-bearing: same-basename
-    sibling clones (the `~/Hacking/<repo>` vs `~/services/<repo>` dual-clone
-    pattern) share a repo *name* but live at different roots, so a name-keyed
-    match would collapse them and mis-mark the un-pushed clone's abandoned FAIL
-    as covered — the very hide-the-stale-FAIL failure this surface exists to
-    prevent. All branches of one clone also share a `root_path`, so the branch
-    axis keeps sibling branches of the pushed clone distinct too. The mark only
-    appears when BOTH a current repo root and a current branch are given."""
-    if not backlog:
-        return ""
-    # Key on root_path (distinct per clone); carry the display name alongside.
+    cleanup nudge. Groups by (root_path, branch) — keyed on ROOT, not repo name,
+    so same-basename sibling clones (the `~/Hacking/<repo>` vs `~/services/<repo>`
+    pattern) stay distinct rather than collapsing into one row. The pushed branch
+    is deliberately NOT marked: this only runs once the gate has confirmed the
+    pushed (repo, branch) has zero open FAILs (it denies otherwise), so the pushed
+    branch can never appear in this backlog — there's nothing to mark."""
     groups: dict[tuple[str, str], list[int]] = {}
     display_name: dict[tuple[str, str], str] = {}
     for row in backlog:
@@ -318,13 +307,8 @@ def format_backlog_summary(
         "",
     ]
     for (root_path, branch), ids in groups.items():
-        is_current = (
-            bool(current_repo_root) and bool(current_branch)
-            and root_path == current_repo_root and branch == current_branch
-        )
-        mark = "  <- current branch (already covered by the hard gate)" if is_current else ""
         id_list = ", ".join(f"#{i}" for i in ids)
-        lines.append(f"  {display_name[(root_path, branch)]}  {branch}  ({len(ids)}) {id_list}{mark}")
+        lines.append(f"  {display_name[(root_path, branch)]}  {branch}  ({len(ids)}) {id_list}")
     lines += [
         "",
         "Sweep the STALE ones while you're here: open them with "

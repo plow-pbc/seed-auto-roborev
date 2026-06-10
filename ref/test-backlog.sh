@@ -129,32 +129,11 @@ assert_contains "$ctx" "open FAIL" "gate surfaces the machine-wide backlog as ad
 assert_contains "$ctx" "INFORMATIONAL" "surfaced backlog is explicitly marked informational/non-blocking"
 assert_contains "$ctx" "alpha" "surfaced backlog names the other-branch repos to sweep"
 
-# Branch-granular current-branch marker (format_backlog_summary, unit-level): two
-# open FAILs on DIFFERENT branches of the SAME repo (same root_path). With the
-# pushed branch = feat/clean, the marker must tag ONLY feat/clean — a repo-only
-# match would mislabel the sibling feat/other's abandoned FAIL as already-covered,
-# hiding exactly the cross-branch FAIL this surface exists to flag. (Driven on the
-# pure function so it isn't masked by the ephemeral-path filter in a /tmp test.)
-mark_out=$(REF="$REF" python3 - <<'PY'
-import os, sys
-sys.path.insert(0, os.environ["REF"])
-from _roborev_hooklib import format_backlog_summary
-backlog = [
-    {"repo": "clean", "root_path": "/home/u/clean", "branch": "feat/clean", "id": 500},
-    {"repo": "clean", "root_path": "/home/u/clean", "branch": "feat/other", "id": 501},
-]
-print(format_backlog_summary(backlog, current_repo_root="/home/u/clean", current_branch="feat/clean"))
-PY
-)
-clean_line=$(printf '%s\n' "$mark_out" | grep "feat/clean")
-other_line=$(printf '%s\n' "$mark_out" | grep "feat/other")
-assert_contains "$clean_line" "current branch" "pushed branch (feat/clean) IS marked as current"
-assert_not_contains "$other_line" "current branch" "sibling branch (feat/other) of the same repo is NOT mis-marked as current"
-
-# Same-basename, different-root sibling clones (the ~/Hacking/<repo> vs
-# ~/services/<repo> dual-clone pattern) on the SAME branch must NOT collapse:
-# only the pushed ROOT is marked, not the same-named clone at another path.
-dual_out=$(REF="$REF" python3 - <<'PY'
+# Root-keyed grouping (format_backlog_summary, unit-level): same-basename sibling
+# clones (the ~/Hacking/<repo> vs ~/services/<repo> pattern) on the SAME branch
+# must NOT collapse into one row — grouping is keyed on root_path, not repo name,
+# so each clone's open FAIL stays its own visible line for the sweep.
+group_out=$(REF="$REF" python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["REF"])
 from _roborev_hooklib import format_backlog_summary
@@ -162,18 +141,12 @@ backlog = [
     {"repo": "plow", "root_path": "/home/u/Hacking/plow",  "branch": "main", "id": 700},
     {"repo": "plow", "root_path": "/home/u/services/plow", "branch": "main", "id": 701},
 ]
-out = format_backlog_summary(backlog, current_repo_root="/home/u/Hacking/plow", current_branch="main")
-# Tag each line with its sole id so the two same-name/same-branch rows stay
-# distinguishable in the rendered output.
-for line in out.splitlines():
-    if "#700" in line: print("HACKING:" + line)
-    if "#701" in line: print("SERVICES:" + line)
+print(format_backlog_summary(backlog))
 PY
 )
-hacking_line=$(printf '%s\n' "$dual_out" | grep '^HACKING:')
-services_line=$(printf '%s\n' "$dual_out" | grep '^SERVICES:')
-assert_contains "$hacking_line" "current branch" "pushed clone (~/Hacking/plow) IS marked as current"
-assert_not_contains "$services_line" "current branch" "same-name sibling clone (~/services/plow) on the same branch is NOT mis-marked"
+assert_contains "$group_out" "#700" "root-keyed grouping keeps the ~/Hacking clone's FAIL visible"
+assert_contains "$group_out" "#701" "root-keyed grouping keeps the same-name ~/services clone's FAIL visible as a distinct row"
+assert_contains "$group_out" "across 2 branch(es)" "same-name clones on the same branch count as 2 distinct (root,branch) groups, not 1"
 
 # When the backlog is empty, the allow path stays a SILENT clean allow (no JSON).
 sqlite3 "$DB" "UPDATE reviews SET closed=1;"
