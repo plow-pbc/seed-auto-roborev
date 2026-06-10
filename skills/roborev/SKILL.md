@@ -1,6 +1,6 @@
 ---
 name: roborev
-description: Use when committing or pushing code on a machine where roborev is installed (the seed-auto-roborev review loop) — covers the workflow contract (triage findings at commit time, fix or close every fail-verdict finding, never push over an unread verdict=F) and the roborev command usage (status / list / show / wait / close). Triggers on git commit/push, a pre-push gate denial, a pre-commit context warning, or "roborev findings".
+description: Use when committing, pushing, or switching branches (git checkout / git switch) on a machine where roborev is installed (the seed-auto-roborev review loop) — covers the workflow contract (triage findings at commit time, fix or close every fail-verdict finding, never push or switch away over an unread verdict=F) and the roborev command usage (status / list / show / wait / close). Triggers on git commit/push/checkout/switch, a pre-push or pre-checkout gate denial, a pre-commit context warning, or "roborev findings".
 ---
 
 # roborev — the always-on local review loop
@@ -14,7 +14,7 @@ roborev reviews **every commit on this machine** with a local AI reviewer, the c
 3. **Three Claude Code `PreToolUse[Bash]` hooks bring findings back to you** — the only native path from roborev's DB into an agent's context:
    - **pre-commit context bridge** — before a `git commit`, *injects* this repo+branch's open fail-verdict findings into your context. It only **warns**; it never blocks (commit is too frequent to gate).
    - **pre-push gate** — before a `git push`, it **denies** the push while the **current** branch has open fail-verdict reviews, waiting up to ~600s for in-flight ones to land. Push is the export boundary, so it's a hard gate.
-   - **pre-checkout gate** — before a `git checkout`/`git switch` to *another* branch, it **denies** the switch while the branch you're **leaving** has open fail-verdict reviews. This ENFORCES "drain before switching" (below) so you can't strand findings by moving off a dirty branch — the push gate, being per-current-branch, would never see them. File restores (`git checkout -- <path>`, `git checkout .`, `git restore …`) are NOT gated; it acts on confirmed fails only (no wait).
+   - **pre-checkout gate** — before a `git checkout`/`git switch` to *another* branch, it **denies** the switch while the branch you're **leaving** has open fail-verdict reviews (or still-in-flight ones that could land `verdict=F` after you've left). This ENFORCES "drain before switching" (below) so you can't strand findings by moving off a dirty branch — the push gate, being per-current-branch, would never see them. File restores (`git checkout -- <path>`, `git checkout .`, `git restore …`) are NOT gated. It doesn't *wait* on in-flight reviews (a switch is cheap to retry) — it denies and tells you to `roborev wait`, then re-try once the branch is drained.
 
 The gates are Claude-only and bypassable on a box you control — a workflow forcing function against silently pushing/switching over a `verdict=F` you never read, **not** a security boundary.
 
