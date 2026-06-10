@@ -206,15 +206,18 @@ def _is_branch_switch_args(subcommand: str, args: list[str]) -> bool:
         a == "--pathspec-from-file" or a.startswith("--pathspec-from-file=")
         for a in args
     )
-    # Operands = non-option tokens before any `--` (everything after `--` is a
-    # pathspec by definition). Create-flag VALUES (`-b <new>`) are operands of
-    # the flag, not the switch target, but their presence already forces a gate
-    # via has_create, so we don't special-case them out of the operand count.
+    # Operands = non-option tokens. For `checkout`, everything after `--` is a
+    # pathspec by definition, so collection STOPS at `--`. For `switch`, `--` is
+    # only an options terminator (switch has no pathspec mode), so the operand
+    # after it is still the branch target (`git switch -- other` switches to
+    # `other`) — don't stop at `--` for switch. Create-flag VALUES (`-b <new>`)
+    # are operands of the flag, not the switch target, but their presence already
+    # forces a gate via has_create, so we don't special-case them out.
     operands = []
     for a in args:
-        if a == "--":
+        if a == "--" and subcommand == "checkout":
             break
-        if not a.startswith("-"):
+        if a != "--" and not a.startswith("-"):
             operands.append(a)
 
     if subcommand == "switch":
@@ -380,7 +383,7 @@ def _list_jobs(roborev: str, repo_root: str, branch: str) -> list[dict] | None:
 # under a system temp dir. roborev's own pytest suite, the seed's verify.sh
 # throwaway repo, and ad-hoc smoke clones all land here and would otherwise
 # dominate the backlog count with noise that vanishes on its own.
-_EPHEMERAL_ROOT_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/")
+_EPHEMERAL_ROOT_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/")
 
 
 def _is_ephemeral_repo(root_path: object) -> bool:

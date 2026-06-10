@@ -48,7 +48,10 @@ assert_eq "" "$out" "gate ignores 'echo git checkout ...' (first token must be g
 # --- DENY: switching AWAY from a branch with an open fail-verdict review ------
 # Parametrize over every form that LEAVES the current branch; all must deny when
 # the leaving branch has an open verdict=F. (Same fixture/repo state, different
-# switch syntax — the parser's branch-switch recognition is the axis.)
+# switch syntax — the parser's branch-switch recognition is the axis.) Notable
+# entries: `git switch -- other` — for switch, `--` is an options terminator (no
+# pathspec mode), so `other` is still the branch target → must gate; `git
+# checkout featurefile` — a bare single word treated as a branch ref.
 for sw in \
   "git checkout other" \
   "git switch other" \
@@ -63,7 +66,8 @@ for sw in \
   "git checkout --detach" \
   "git switch -d" \
   "git switch -d main" \
-  "git checkout featurefile"   # bare single word → treated as a branch ref
+  "git switch -- other" \
+  "git checkout featurefile"
 do
   root=$(new_repo "$OPEN_FAIL")
   out=$(run_cmd "$root" "$sw")
