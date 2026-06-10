@@ -4,9 +4,9 @@
 # its own git hooks (`post-commit` enqueues a review every commit, `post-rewrite`
 # remaps on rebase/amend) via `roborev install-hook --force`. This SEED sets up
 # the bits roborev doesn't itself: the review agent (claude-code), the daemon as
-# a managed user-level service, the global core.hooksPath value, and the two
-# Claude Code PreToolUse[Bash] hooks (context bridge + pre-push gate) — the
-# surfaces that bring findings to the *agent*, where it can act on them.
+# a managed user-level service, the global core.hooksPath value, and the three
+# Claude Code PreToolUse[Bash] hooks (context bridge + pre-push gate + pre-checkout
+# gate) — the surfaces that bring findings to the *agent*, where it can act on them.
 set -euo pipefail
 
 HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
@@ -230,7 +230,7 @@ log "merged PreToolUse[Bash] roborev bridge + pre-push gate + pre-checkout gate 
 # USE roborev and the workflow contract it serves (let reviews finish before
 # push, fix or `roborev close` fail-verdict findings, never push over an unread
 # verdict=F). A skill is Claude Code's native home for "how to use tool X + its
-# loop" and auto-activates on commit/push triggers. Installed to ~/.claude/skills
+# loop" and auto-activates on commit/push/checkout/switch triggers. Installed to ~/.claude/skills
 # as a real dir: claude-config's `just install` only prunes ITS OWN repo-owned
 # skill symlinks and preserves user-owned entries, so this coexists collision-free.
 SKILL_DIR="$HOME/.claude/skills/roborev"
