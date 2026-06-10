@@ -191,9 +191,10 @@ def _is_branch_switch_args(subcommand: str, args: list[str]) -> bool:
     has_create = any(a in create_flags for a in args)
     # `--detach` LEAVES the current branch for a detached HEAD (`git switch
     # --detach <ref>` / `git checkout --detach [<ref>]`). The ref form already
-    # gates via its operand, but `git checkout --detach` with no ref doesn't —
-    # treat `--detach` itself as a branch-leaving signal for both subcommands.
-    has_detach = "--detach" in args
+    # gates via its operand, but the no-ref form doesn't — treat detach itself as
+    # a branch-leaving signal. `-d` is git's short alias for `--detach` on
+    # `git switch` ONLY (`git checkout` has no `-d`), so accept it for switch.
+    has_detach = "--detach" in args or (subcommand == "switch" and "-d" in args)
     has_dashdash = "--" in args
     has_pathspec_from_file = any(
         a == "--pathspec-from-file" or a.startswith("--pathspec-from-file=")

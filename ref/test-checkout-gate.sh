@@ -61,6 +61,8 @@ for sw in \
   "git switch --detach main" \
   "git checkout --detach main" \
   "git checkout --detach" \
+  "git switch -d" \
+  "git switch -d main" \
   "git checkout featurefile"   # bare single word → treated as a branch ref
 do
   root=$(new_repo "$OPEN_FAIL")
