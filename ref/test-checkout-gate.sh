@@ -99,6 +99,7 @@ for sw in \
   "git switch -c newbranch" \
   "git switch -C newbranch" \
   "git checkout -" \
+  "git switch -" \
   "git checkout featurefile"   # bare single word → treated as a branch ref
 do
   root=$(new_repo "$OPEN_FAIL")

@@ -190,8 +190,10 @@ def _is_branch_switch_args(subcommand: str, args: list[str]) -> bool:
 
     if subcommand == "switch":
         # `switch` is exclusively a branch operation. Gate unless it's the bare
-        # no-op (`git switch` with no branch and no -c/-C target).
-        return has_create or bool(operands)
+        # no-op (`git switch` with no branch and no -c/-C target). `git switch -`
+        # (previous branch) reads `-` as an option token, so it's filtered out of
+        # `operands` — handle it explicitly, mirroring the checkout path below.
+        return has_create or "-" in args or bool(operands)
 
     # subcommand == "checkout"
     if has_dashdash or has_pathspec_from_file:
