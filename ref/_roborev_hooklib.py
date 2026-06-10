@@ -28,6 +28,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -35,6 +36,11 @@ from pathlib import Path
 # The seed installs roborev here (ref/install.sh). Trust that path first; fall
 # back to PATH for a dev who keeps it elsewhere.
 SEEDED_ROBOREV = Path.home() / ".local" / "bin" / "roborev"
+
+# The daemon's machine-wide review store (one DB per machine). The cross-branch
+# backlog view reads it directly — the `roborev list` CLI has no all-repos /
+# all-branches mode, so there's no public seam to delegate to for the backlog.
+ROBOREV_DB = Path.home() / ".roborev" / "reviews.db"
 
 _OPERATOR_TOKENS = {"&&", "||", "|", ";", "&"}
 # git's global options that take a separate argument token (`-X val`). Long
@@ -219,3 +225,99 @@ def _list_jobs(roborev: str, repo_root: str, branch: str) -> list[dict] | None:
     if data is None:        # roborev prints JSON `null`, not `[]`, for a never-
         return []           # reviewed repo+branch — a clean "no jobs", not a fault.
     return data if isinstance(data, list) else None
+
+
+# A repo path is an EPHEMERAL test fixture (not real work to drain) when it lives
+# under a system temp dir. roborev's own pytest suite, the seed's verify.sh
+# throwaway repo, and ad-hoc smoke clones all land here and would otherwise
+# dominate the backlog count with noise that vanishes on its own.
+_EPHEMERAL_ROOT_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/")
+
+
+def _is_ephemeral_repo(root_path: object) -> bool:
+    return isinstance(root_path, str) and root_path.startswith(_EPHEMERAL_ROOT_PREFIXES)
+
+
+def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
+    """The MACHINE-WIDE open fail-verdict backlog: every unclosed FAIL review
+    across ALL repos and branches in the daemon's store, ephemeral fixture repos
+    filtered out. Read-only — a single SELECT, opened read-only so a concurrent
+    daemon write is never at risk.
+
+    Returns a list of `{repo, root_path, branch, id}` dicts (one per open FAIL),
+    or `None` if the DB can't be read (missing file, locked, schema drift) — the
+    same None-vs-[] distinction `_list_jobs` draws, so callers can tell "nothing
+    open" from "couldn't look." This is INFORMATIONAL ONLY (the pre-push gate
+    surfaces it non-blocking); a None just means "no backlog summary this time,"
+    never a denied push.
+
+    `reviews.verdict_bool = 0` is the DB-level spelling of `_is_open_fail`'s
+    `verdict == "F"` (FAIL): the CLI maps the same column to the "F"/"P" letter.
+    `reviews.closed = 0` is the same `not closed` both surfaces require. Kept here
+    next to `_is_open_fail` so the two definitions of "outstanding finding" can't
+    drift — one over the CLI rows, one over the DB rows, same predicate."""
+    if not db_path.is_file():
+        return None
+    try:
+        # Read-only (immutable) connection: never creates/locks/migrates the DB,
+        # and won't block on the daemon's write lock.
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT repos.name        AS repo,
+                       repos.root_path   AS root_path,
+                       review_jobs.branch AS branch,
+                       reviews.id        AS id
+                FROM reviews
+                JOIN review_jobs ON reviews.job_id = review_jobs.id
+                JOIN repos       ON review_jobs.repo_id = repos.id
+                WHERE reviews.verdict_bool = 0
+                  AND reviews.closed = 0
+                ORDER BY repos.name, review_jobs.branch, reviews.id
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return [dict(r) for r in rows if not _is_ephemeral_repo(r["root_path"])]
+
+
+def format_backlog_summary(backlog: list[dict]) -> str:
+    """Render `open_fail_backlog()` output as a compact `repo  branch  count/ids`
+    block for the pre-push gate's non-blocking surface, plus the active-vs-stale
+    cleanup nudge. Groups by (root_path, branch) — keyed on ROOT, not repo name,
+    so same-basename sibling clones (the `~/Hacking/<repo>` vs `~/services/<repo>`
+    pattern) stay distinct rather than collapsing into one row. The pushed branch
+    is deliberately NOT marked: this only runs once the gate has confirmed the
+    pushed (repo, branch) has zero open FAILs (it denies otherwise), so the pushed
+    branch can never appear in this backlog — there's nothing to mark."""
+    groups: dict[tuple[str, str], list[int]] = {}
+    display_name: dict[tuple[str, str], str] = {}
+    for row in backlog:
+        key = (row["root_path"], row["branch"] or "(detached)")
+        groups.setdefault(key, []).append(row["id"])
+        display_name.setdefault(key, row["repo"])
+    lines = [
+        f"roborev backlog: {len(backlog)} open FAIL review(s) across "
+        f"{len(groups)} branch(es) machine-wide (this is INFORMATIONAL — your "
+        "push is NOT blocked by other branches):",
+        "",
+    ]
+    for (root_path, branch), ids in groups.items():
+        id_list = ", ".join(f"#{i}" for i in ids)
+        lines.append(f"  {display_name[(root_path, branch)]}  {branch}  ({len(ids)}) {id_list}")
+    lines += [
+        "",
+        "Sweep the STALE ones while you're here: open them with "
+        "`roborev show <id>`, and for any that are days-old, caused by code you "
+        "authored, or invalid / valid-but-YAGNI, resolve + `roborev close <id>` "
+        "(fix-then-close, or `roborev comment <id> -m \"<why declined>\"` "
+        "then close). But NEVER close a finding a parallel session is actively "
+        "working — recently-created, on a branch checked out in another clone, or "
+        "under a PR being iterated. When unsure whether a finding is active, "
+        "LEAVE IT. This is the active-vs-stale test, not branch ownership.",
+    ]
+    return "\n".join(lines)

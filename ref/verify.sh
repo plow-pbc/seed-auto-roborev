@@ -80,6 +80,25 @@ else
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
+# --- v-listall — `roborev list --all` backlog helper (seed-owned) ------------
+# The machine-wide open-FAIL backlog view the upstream CLI lacks. Installed
+# alongside the hooks; reads ~/.roborev/reviews.db read-only. Smoke it against
+# an empty mocked HOME (no DB) — it must exit 1 (couldn't look) with the GRACEFUL
+# "could not read" message on stderr, NOT a crash (Python also exits 1 on an
+# uncaught exception, so the rc alone can't tell graceful-return-1 from a
+# traceback — assert the message AND the absence of a Traceback).
+LISTALL="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-list-all.py"
+[ -x "$LISTALL" ] && ok "v-listall[file]: backlog helper installed at $LISTALL" || bad "v-listall[file]: missing/not-exec at $LISTALL"
+la_home="$(mktemp -d)"; la_err="$(mktemp)"
+HOME="$la_home" python3 "$LISTALL" >/dev/null 2>"$la_err"; la_rc=$?
+la_msg="$(cat "$la_err")"
+if [ "$la_rc" -eq 1 ] && printf '%s' "$la_msg" | grep -q "could not read" && ! printf '%s' "$la_msg" | grep -q "Traceback"; then
+  ok "v-listall[run]: helper exits 1 with the graceful 'could not read' status on a missing DB (no crash)"
+else
+  bad "v-listall[run]: helper did not cleanly report the missing-DB status (rc=$la_rc, stderr='$la_msg')"
+fi
+rm -rf "$la_home" "$la_err"
+
 # --- v-skill — Claude Code roborev usage skill ------------------------------
 SKILL="$HOME/.claude/skills/roborev/SKILL.md"
 # Assert the FIRST frontmatter block (line 1 `---`, line 2 `name: roborev`) — not
