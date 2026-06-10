@@ -26,12 +26,18 @@ What gets gated vs. not (full rationale in `_is_branch_switch_args`):
   over-block (the agent restores via `git restore` / `git checkout -- f`, which
   aren't gated), never an under-gate that lets a real switch strand findings.
 
-Unlike the push gate, this gate does NOT wait on in-flight reviews. A checkout
-exports nothing, and an unfinished review on the branch you're leaving doesn't
-vanish when you switch — it's still there (and still gated) when you come back.
-Waiting would stall every branch switch on the daemon for no safety gain, so the
-gate acts on the already-landed confirmed open-fail set only: deny on a terminal
-`verdict=F`, allow otherwise.
+Unlike the push gate, this gate does NOT wait on in-flight reviews — but it does
+DENY while any remain (fail-safe), rather than waiting them out. A checkout
+exports nothing, so blocking-then-retry is cheaper than stalling the switch on
+the daemon for up to the wait timeout; and an in-flight review that lands
+`verdict=F` AFTER the agent switched away would strand exactly as this gate
+exists to prevent. So the gate denies on EITHER a confirmed terminal `verdict=F`
+OR an unfinished (non-terminal, unclosed) review on the leaving branch, telling
+the agent to `roborev wait` for the in-flight ones and re-try the switch once the
+branch is drained. Reviews that finished clean (PASS) or were `roborev close`d
+never block. The push gate waits-then-rechecks because a push must not be
+deferred indefinitely; a branch switch can simply be retried, so the simpler
+no-wait deny suffices here.
 
 ALLOWS (no-op) on anything that isn't a real branch-switching segment, on a
 detached HEAD (no leaving-branch to scope to), and when roborev / git / the repo
@@ -58,20 +64,13 @@ from _roborev_hooklib import (
     _git_toplevel,
     _list_jobs,
     _is_open_fail,
+    _in_flight,
+    _deny,
 )
 
 
 def _allow() -> int:
     return 0  # exit 0, no stdout → normal permission flow proceeds
-
-
-def _deny(reason: str) -> int:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
-    }}))
-    return 0
 
 
 def _format_block(branch: str, jobs: list[dict]) -> str:
@@ -131,9 +130,26 @@ def main() -> int:
         return _allow()  # unreadable list → fail OPEN (see module docstring;
                          # the push gate fails CLOSED here, the checkout gate does
                          # NOT — a blocked switch strands no code).
+    # Confirmed terminal fails first — they can't be cleared by waiting, so name
+    # them directly rather than rolling them into the in-flight message.
     outstanding = [j for j in jobs if _is_open_fail(j)]
     if outstanding:
         return _deny(_format_block(branch, outstanding))
+    # Then in-flight (non-terminal, unclosed) reviews: one that lands `verdict=F`
+    # AFTER the switch would strand exactly as this gate prevents. We don't wait
+    # (a switch is cheap to retry, unlike a push) — deny and tell the agent to
+    # `roborev wait` and re-try once the branch is drained.
+    flight = _in_flight(jobs)
+    if flight:
+        n = len(flight)
+        return _deny(
+            f"Branch switch blocked: {n} roborev review(s) on the branch you're "
+            f"LEAVING ({branch!r}) are still in flight — one could land "
+            "verdict=F after you've switched away and strand the finding. "
+            "`roborev wait` for them to finish, resolve any fail-verdict ones "
+            "(`roborev list --open` → fix-then-close or comment-then-close), then "
+            "re-run the switch."
+        )
     return _allow()
 
 

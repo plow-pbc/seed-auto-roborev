@@ -41,6 +41,22 @@ from pathlib import Path
 # back to PATH for a dev who keeps it elsewhere.
 SEEDED_ROBOREV = Path.home() / ".local" / "bin" / "roborev"
 
+
+def _emit_hook(extra: dict) -> None:
+    """Print a PreToolUse hook result — `extra` merged into the
+    `hookSpecificOutput` envelope all three hooks share (so a future envelope
+    tweak has ONE writer). The bridge passes `additionalContext`; the gates pass
+    `permissionDecision` + `permissionDecisionReason` via `_deny`."""
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", **extra}}))
+
+
+def _deny(reason: str) -> int:
+    """Emit a PreToolUse permission DENY with `reason`, returning 0 so callers can
+    `return _deny(...)` straight out of `main()`. Shared by both gates — the
+    pre-push and pre-checkout gates' deny envelope is byte-identical."""
+    _emit_hook({"permissionDecision": "deny", "permissionDecisionReason": reason})
+    return 0
+
 _OPERATOR_TOKENS = {"&&", "||", "|", ";", "&"}
 # git's global options that take a separate argument token (`-X val`). Long
 # `--opt=val` forms carry their value in the same token; the startswith("-")
@@ -276,6 +292,22 @@ def _git_toplevel(cwd: str) -> str:
 # so the gate waits on it and stays fail-closed. Keep in sync with the terminal
 # set in `verify.sh` / `SEED.md`.
 TERMINAL_STATUSES = ("done", "passed", "failed")
+
+
+def _in_flight(jobs: list[dict]) -> list[dict]:
+    """Reviews the daemon hasn't finished. Denylists TERMINAL_STATUSES rather
+    than allowlisting {queued,running}, so ANY unrecognized non-terminal status
+    (an enqueue/`pending`/`starting` state, or a future one) counts as in-flight
+    — keeping both gates fail-CLOSED on an unknown status. A row with no/null
+    status is also treated as in-flight. Drifted non-dict rows are ignored
+    (best-effort, like `_is_open_fail`).
+
+    A `closed` row is NOT in flight even mid-run: a `roborev close`'d review can
+    never become an outstanding finding (`_is_open_fail` requires `not closed`),
+    so neither gate should wait on / block over it."""
+    return [j for j in jobs
+            if isinstance(j, dict) and not j.get("closed", False)
+            and j.get("status") not in TERMINAL_STATUSES]
 
 
 def _is_open_fail(job: object) -> bool:

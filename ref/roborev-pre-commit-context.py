@@ -50,6 +50,7 @@ from _roborev_hooklib import (
     _git_toplevel,
     _list_jobs,
     _is_open_fail,
+    _emit_hook,
 )
 
 MAX_REVIEWS = 5
@@ -106,11 +107,6 @@ def _redact_secrets(text: str) -> str:
     return text
 
 
-def _emit(extra: dict) -> None:
-    """Print a PreToolUse hook result merging `extra` into hookSpecificOutput."""
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", **extra}}))
-
-
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -130,7 +126,7 @@ def main() -> int:
     # from the command parse alone, so it fires even if git itself is unusual.
     roborev = _find_roborev()
     if roborev is None:
-        _emit({"additionalContext": MISSING_ROBOREV_WARNING})
+        _emit_hook({"additionalContext": MISSING_ROBOREV_WARNING})
         return 0
 
     # Binary present -> surface open fail-verdict findings (informational, never
@@ -145,7 +141,7 @@ def main() -> int:
         return 0
     rows = _fail_open_reviews(roborev, repo_root, branch)
     if rows:
-        _emit({"additionalContext": _format_findings(roborev, repo_root, branch, rows)})
+        _emit_hook({"additionalContext": _format_findings(roborev, repo_root, branch, rows)})
     return 0
 
 

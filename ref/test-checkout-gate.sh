@@ -21,56 +21,14 @@ HOOK="$(cd "$(dirname "$0")" && pwd)/roborev-pre-checkout-gate.py"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp"
-mkdir -p "$HOME/.local/bin"
 FIXTURES="$tmp/fixtures"; mkdir -p "$FIXTURES"
 export PATH="$HOME/.local/bin:$PATH"
 command -v jq >/dev/null || { echo "jq required for this test suite" >&2; exit 1; }
 
-# Fake roborev. `list --json --repo R --branch B` prints repo R's fixture array
-# (the gate filters verdict/status itself). A listfail.<repohash> sentinel makes
-# `list` exit nonzero (wedged daemon) — the checkout gate must fail OPEN on that.
-cat > "$HOME/.local/bin/roborev" <<BIN
-#!/usr/bin/env bash
-FIXTURES="$FIXTURES"
-BIN
-cat >> "$HOME/.local/bin/roborev" <<'BIN'
-repo_hash() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
-fixture_for() { printf '%s/%s.json' "$FIXTURES" "$(repo_hash "$1")"; }
-sub="$1"; shift || true
-if [[ "$sub" == "list" ]]; then
-  repo=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in --repo) repo="$2"; shift 2;; --branch) shift 2;; --json) shift;; *) shift;; esac
-  done
-  [[ -f "$FIXTURES/listfail.$(repo_hash "$repo")" ]] && exit 3
-  f="$(fixture_for "$repo")"
-  if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi
-  exit 0
-fi
-exit 0
-BIN
-chmod +x "$HOME/.local/bin/roborev"
-
-write_fixture() {  # write_fixture <repo_root> <json_array>
-  printf '%s' "$2" > "$FIXTURES/$(printf '%s' "$1" | sha256sum | cut -d' ' -f1).json"
-}
-
-# Stand up a throwaway repo on branch feature/x, write its fixture (the open set
-# on the branch being LEFT). Echoes the repo root.
-new_repo() {  # new_repo <fixture_json> -> echoes repo root
-  local d root; d="$(mktemp -d "$tmp/repo.XXXXXX")"
-  git init -q -b feature/x "$d"
-  root=$(git -C "$d" rev-parse --show-toplevel)
-  write_fixture "$root" "$1"
-  printf '%s' "$root"
-}
-run_cmd() {  # run_cmd <repo_root> <git_cmd>
-  local root="$1" cmd="$2"
-  local payload; payload=$(jq -n --arg cmd "$cmd" --arg cwd "$root" \
-    '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
-  printf '%s' "$payload" | python3 "$HOOK"
-}
-is_deny() { printf '%s' "$1" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1; }
+# Shared roborev fake-CLI + fixture harness (testlib.sh). The checkout gate only
+# calls `list`, so no `with_wait`. run_cmd binds run_hook to this suite's HOOK.
+setup_fake_roborev
+run_cmd() { run_hook "$HOOK" "$1" "$2"; }
 
 OPEN_FAIL='[{"id":20,"git_ref":"abc123","status":"done","verdict":"F","closed":false}]'
 
@@ -156,11 +114,28 @@ root=$(new_repo '[]')
 out=$(run_cmd "$root" "git checkout other")
 assert_eq "" "$out" "gate allows a switch when the leaving branch has no reviews at all"
 
-# An IN-FLIGHT review (not yet verdict=F) does NOT block a switch — the gate acts
-# on confirmed open fails only (no wait), unlike the push gate.
+# An IN-FLIGHT review (not yet verdict=F) DENIES the switch (fail-safe): it could
+# land verdict=F after the agent switched away and strand the finding. The gate
+# doesn't WAIT (a switch is cheap to retry) — it denies and tells the agent to
+# `roborev wait` then re-try. (The push gate waits-then-rechecks; the cheaper
+# no-wait deny suffices for a retryable switch.)
 root=$(new_repo '[{"id":30,"git_ref":"r30","status":"running","verdict":null,"closed":false}]')
 out=$(run_cmd "$root" "git switch other")
-assert_eq "" "$out" "gate allows a switch with only an in-flight (non-fail) review (no wait, confirmed-fails only)"
+is_deny "$out"; assert_rc 0 $? "gate DENIES a switch while an in-flight review is unfinished (could land FAIL after leaving)"
+reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+assert_contains "$reason" "roborev wait" "in-flight deny tells the agent to roborev wait and retry"
+
+# An UNRECOGNIZED non-terminal status (outside {queued,running}) is also in-flight
+# (denylist of terminal states), so it too denies — never silently allowed.
+root=$(new_repo '[{"id":34,"git_ref":"r34","status":"starting","verdict":null,"closed":false}]')
+out=$(run_cmd "$root" "git switch other")
+is_deny "$out"; assert_rc 0 $? "gate treats an unrecognized non-terminal status (starting) as in-flight and DENIES"
+
+# A terminal PASS and a closed-fail are NOT in flight → switch allowed (covered
+# below in the clean-branch case); a closed in-flight-looking row is also ignored.
+root=$(new_repo '[{"id":35,"git_ref":"r35","status":"running","verdict":null,"closed":true}]')
+out=$(run_cmd "$root" "git switch other")
+assert_eq "" "$out" "gate allows a switch when the only non-terminal review is CLOSED (not outstanding)"
 
 # --- drift tolerance: a null-id terminal open-FAIL still denies + renders ------
 root=$(new_repo '[{"id":null,"git_ref":"reffallbk","status":"done","verdict":"F","closed":false}]')
