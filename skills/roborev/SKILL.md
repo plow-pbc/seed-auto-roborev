@@ -5,11 +5,11 @@ description: Use when committing, pushing, or switching branches (git checkout /
 
 # roborev — the always-on local review loop
 
-roborev reviews **every commit on this machine** with a local AI reviewer, the cheap first pass *before* an expensive PR review (e.g. knightwatch). You don't trigger it — you **consume** its findings. This skill is the workflow contract + command reference for that loop.
+roborev reviews **every commit on this machine** (pytest fixture repos excepted — see step 1 below) with a local AI reviewer, the cheap first pass *before* an expensive PR review (e.g. knightwatch). You don't trigger it — you **consume** its findings. This skill is the workflow contract + command reference for that loop.
 
 ## How the loop runs (you don't start any of this)
 
-1. **Every `git commit`** → roborev's own `post-commit` git hook (installed machine-wide via `core.hooksPath`) enqueues a review job.
+1. **Every `git commit`** → the seed-wrapped `post-commit` git hook (installed machine-wide via `core.hooksPath`) enqueues a review job. The wrapper skips pytest fixture repos (`*/pytest-of-*/pytest-*` — test-suite throwaway commits would flood the DB with noise) and delegates everything else to roborev's underlying `roborev post-commit`.
 2. **The `roborev-daemon` user service** processes the queue with the `claude-code` agent and records a verdict in `~/.roborev/reviews.db`.
 3. **Three Claude Code `PreToolUse[Bash]` hooks bring findings back to you** — the only native path from roborev's DB into an agent's context:
    - **pre-commit context bridge** — before a `git commit`, *injects* this repo+branch's open fail-verdict findings into your context. It only **warns**; it never blocks (commit is too frequent to gate).

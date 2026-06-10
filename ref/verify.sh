@@ -3,7 +3,7 @@
 # Read-only on installed state, EXCEPT one ephemeral throwaway git repo it
 # creates + a single commit in it: a deliberately-broken hello-world that a
 # claude-code reviewer must flag, proving the review loop end-to-end via the
-# public `roborev list` seam (the post-commit hook is roborev's own, silent
+# public `roborev list` seam (the seed-wrapped post-commit hook is a silent
 # one). Cleaned up before exit. Fail-loud: any miss → nonzero.
 set -uo pipefail
 
@@ -26,7 +26,13 @@ agent="$([ -n "$ROBOREV" ] && "$ROBOREV" config get default_agent 2>/dev/null | 
 [ "$agent" = "claude-code" ] && ok "v-agent: default_agent=$agent" || bad "v-agent: default_agent='$agent' (expected claude-code)"
 hp="$(git config --global core.hooksPath || true)"
 [ "$hp" = "$HOOKS_DIR" ] && ok "v-hookspath: core.hooksPath=$HOOKS_DIR" || bad "v-hookspath: core.hooksPath='$hp' (expected $HOOKS_DIR)"
-[ -x "$HOOKS_DIR/post-commit" ]  && ok "v-postcommit: post-commit executable (roborev-owned)"   || bad "v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
+[ -x "$HOOKS_DIR/post-commit" ]  && ok "v-postcommit: post-commit executable (seed-wrapped)"     || bad "v-postcommit: $HOOKS_DIR/post-commit missing or not executable"
+# The seed wraps post-commit (§5) to skip pytest fixture repos. Assert the guard
+# actually landed — a bare roborev stub is also executable + enqueues, so compare
+# the installed hook byte-for-byte against the seed source (the source of truth in
+# this same ref/ dir). Catches "install-hook clobbered it" (a reordered §5 or a
+# roborev self-update that re-ran install-hook last) and any drift, no pattern dup.
+cmp -s "$(dirname "$0")/post-commit" "$HOOKS_DIR/post-commit" && ok "v-postcommit[guard]: installed hook matches the seed wrapper" || bad "v-postcommit[guard]: $HOOKS_DIR/post-commit differs from ref/post-commit (install-hook clobbered it?) — re-run install.sh"
 [ -x "$HOOKS_DIR/post-rewrite" ] && ok "v-postrewrite: post-rewrite executable (roborev-owned)" || bad "v-postrewrite: $HOOKS_DIR/post-rewrite missing or not executable"
 # No orphaned wrappers from a prior seed version (the installer removes them).
 [ ! -e "$HOOKS_DIR/pre-commit" ]         && ok "v-nostale[pre-commit]: no orphaned seed pre-commit wrapper" || bad "v-nostale[pre-commit]: stale $HOOKS_DIR/pre-commit from a prior seed — re-run install.sh"
@@ -174,7 +180,7 @@ git add app.py
 git commit -q -m "seed-verify broken hello world"
 sha1=$(git rev-parse --short HEAD)
 
-# v-loop[enqueued]: roborev's post-commit hook enqueued a review for this repo.
+# v-loop[enqueued]: the seed-wrapped post-commit hook enqueued a review for this repo.
 jobs_json="$("$ROBOREV" list --repo "$tmp" --json 2>/dev/null || echo '[]')"
 job_id=$(printf '%s' "$jobs_json" | jq '.[0].id // empty' 2>/dev/null)
 job_agent=$(printf '%s' "$jobs_json" | jq -r '.[0].agent // "?"' 2>/dev/null)
