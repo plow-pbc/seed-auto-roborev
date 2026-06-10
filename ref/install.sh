@@ -4,9 +4,9 @@
 # its own git hooks (`post-commit` enqueues a review every commit, `post-rewrite`
 # remaps on rebase/amend) via `roborev install-hook --force`. This SEED sets up
 # the bits roborev doesn't itself: the review agent (claude-code), the daemon as
-# a managed user-level service, the global core.hooksPath value, and the two
-# Claude Code PreToolUse[Bash] hooks (context bridge + pre-push gate) — the
-# surfaces that bring findings to the *agent*, where it can act on them.
+# a managed user-level service, the global core.hooksPath value, and the three
+# Claude Code PreToolUse[Bash] hooks (context bridge + pre-push gate + pre-checkout
+# gate) — the surfaces that bring findings to the *agent*, where it can act on them.
 set -euo pipefail
 
 HOOKS_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/git-hooks"
@@ -170,29 +170,34 @@ rm -f "$HOOKS_DIR/pre-commit" "$HOOKS_DIR/roborev-hooklib.sh"
 ( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
 log "installed roborev git hooks (post-commit + post-rewrite) -> $HOOKS_DIR"
 
-# --- 6. Claude Code hooks: context bridge (commit) + pre-push gate ------------
+# --- 6. Claude Code hooks: context bridge + pre-push gate + pre-checkout gate --
 # roborev's own post-commit hook (§5) reviews every commit but its findings have
-# no native path into an agent's context. These two Claude Code PreToolUse[Bash]
-# hooks bring those findings to the AGENT, at the two surfaces where it can act:
+# no native path into an agent's context. These three Claude Code PreToolUse[Bash]
+# hooks bring those findings to the AGENT, at the surfaces where it can act:
 #   - the bridge WARNS before `git commit` (injects open fail-verdict findings
 #     into context, or a broken-install warning) — context-only, never denies;
-#   - the gate DENIES a `git push` while open fail-verdict reviews remain (after
-#     waiting for in-flight ones) — the forcing function that stops findings
-#     accumulating unseen.
-# Both import the shared `_roborev_hooklib.py` (one parser + one definition of an
+#   - the push gate DENIES a `git push` while the CURRENT branch has open fail-
+#     verdict reviews (after waiting for in-flight ones) — stops findings leaving
+#     the machine unseen;
+#   - the checkout gate DENIES a `git checkout`/`git switch` to ANOTHER branch
+#     while the branch being LEFT has open fail-verdict reviews — stops findings
+#     getting stranded on a branch you switch away from (the enforcement half of
+#     "drain before switching"; file restores are NOT gated).
+# All import the shared `_roborev_hooklib.py` (one parser + one definition of an
 # outstanding finding). Installed to a seed-owned path (NOT ~/.claude/hooks,
 # which is a symlink into the claude-config repo) + registered in settings.json.
 BRIDGE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks"
 mkdir -p "$BRIDGE_DIR"
-install -m 0644 "$SEED_REPO/ref/_roborev_hooklib.py"          "$BRIDGE_DIR/_roborev_hooklib.py"
+install -m 0644 "$SEED_REPO/ref/_roborev_hooklib.py"           "$BRIDGE_DIR/_roborev_hooklib.py"
 install -m 0755 "$SEED_REPO/ref/roborev-pre-commit-context.py" "$BRIDGE_DIR/roborev-pre-commit-context.py"
 install -m 0755 "$SEED_REPO/ref/roborev-pre-push-gate.py"      "$BRIDGE_DIR/roborev-pre-push-gate.py"
+install -m 0755 "$SEED_REPO/ref/roborev-pre-checkout-gate.py"  "$BRIDGE_DIR/roborev-pre-checkout-gate.py"
 # `roborev list --all` seed helper — the machine-wide open-FAIL backlog view the
 # upstream CLI lacks. Installed alongside the hooks (it imports the same shared
 # `_roborev_hooklib` for the open-finding definition) so the agent can run the
 # cross-branch sweep by hand: `python3 $BRIDGE_DIR/roborev-list-all.py`.
 install -m 0755 "$SEED_REPO/ref/roborev-list-all.py"          "$BRIDGE_DIR/roborev-list-all.py"
-log "installed Claude hooks (commit bridge + pre-push gate + backlog helper + shared lib) -> $BRIDGE_DIR"
+log "installed Claude hooks (commit bridge + pre-push gate + pre-checkout gate + backlog helper + shared lib) -> $BRIDGE_DIR"
 
 SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
@@ -200,17 +205,21 @@ mkdir -p "$HOME/.claude"
 command -v jq >/dev/null || fail "jq required to merge the Claude hooks into $SETTINGS"
 bridge_cmd="$BRIDGE_DIR/roborev-pre-commit-context.py"
 gate_cmd="$BRIDGE_DIR/roborev-pre-push-gate.py"
+checkout_cmd="$BRIDGE_DIR/roborev-pre-checkout-gate.py"
 tmp_settings="$(mktemp "${SETTINGS}.XXXXXX")"
 # Idempotent append-and-dedupe — mirrors claude-config's justfile merge so other
 # PreToolUse hooks (and all other settings) are preserved; re-running dedupes.
-# The gate carries timeout:660 — 60s over its 600s in-flight wait — so its deny
-# JSON still emits before Claude Code's default 60s hook timeout would kill it.
-jq --arg bridge "$bridge_cmd" --arg gate "$gate_cmd" '
+# The push gate carries timeout:660 — 60s over its 600s in-flight wait — so its
+# deny JSON still emits before Claude Code's default 60s timeout would kill it.
+# The checkout gate does NOT wait (no in-flight stall), so it takes the default
+# timeout — keeping its registration a bare command entry.
+jq --arg bridge "$bridge_cmd" --arg gate "$gate_cmd" --arg checkout "$checkout_cmd" '
   def dedupe_keep_order: reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end);
   .hooks = (.hooks // {})
   | .hooks.PreToolUse = (((.hooks.PreToolUse // []) + [
       {matcher:"Bash", hooks:[{type:"command", command:$bridge}]},
-      {matcher:"Bash", hooks:[{type:"command", command:$gate, timeout:660}]}
+      {matcher:"Bash", hooks:[{type:"command", command:$gate, timeout:660}]},
+      {matcher:"Bash", hooks:[{type:"command", command:$checkout}]}
     ]) | dedupe_keep_order)
 ' "$SETTINGS" > "$tmp_settings"
 # Write THROUGH a possibly-symlinked settings.json — the `>` redirect follows
@@ -219,14 +228,14 @@ jq --arg bridge "$bridge_cmd" --arg gate "$gate_cmd" '
 cat "$tmp_settings" > "$SETTINGS"
 rm -f "$tmp_settings"
 chmod 600 "$SETTINGS"
-log "merged PreToolUse[Bash] roborev bridge + pre-push gate into $SETTINGS"
+log "merged PreToolUse[Bash] roborev bridge + pre-push gate + pre-checkout gate into $SETTINGS"
 
 # --- 7. Claude Code skill: roborev usage + the review-loop contract ----------
 # The §6 hooks bring findings TO the agent; this skill teaches the agent how to
 # USE roborev and the workflow contract it serves (let reviews finish before
-# push, fix or `roborev close` fail-verdict findings, never push over an unread
-# verdict=F). A skill is Claude Code's native home for "how to use tool X + its
-# loop" and auto-activates on commit/push triggers. Installed to ~/.claude/skills
+# push/switch, fix or `roborev close` fail-verdict findings, never push over or
+# switch away from an unread verdict=F). A skill is Claude Code's native home for "how to use tool X + its
+# loop" and auto-activates on commit/push/checkout/switch triggers. Installed to ~/.claude/skills
 # as a real dir: claude-config's `just install` only prunes ITS OWN repo-owned
 # skill symlinks and preserves user-owned entries, so this coexists collision-free.
 SKILL_DIR="$HOME/.claude/skills/roborev"

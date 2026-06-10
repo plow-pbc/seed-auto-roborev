@@ -58,9 +58,11 @@ from _roborev_hooklib import (
     _git_toplevel,
     _list_jobs,
     _is_open_fail,
+    _in_flight,
+    _deny,
+    _emit_hook,
     open_fail_backlog,
     format_backlog_summary,
-    TERMINAL_STATUSES,
 )
 
 # How long to wait for in-flight reviews. Fixed — under the installer's
@@ -96,38 +98,8 @@ def _allow_with_backlog() -> int:
     backlog = open_fail_backlog()
     if not backlog:
         return _allow()
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "additionalContext": format_backlog_summary(backlog),
-    }}))
+    _emit_hook({"additionalContext": format_backlog_summary(backlog)})
     return 0
-
-
-def _deny(reason: str) -> int:
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": reason,
-    }}))
-    return 0
-
-
-def _in_flight(jobs: list[dict]) -> list[dict]:
-    """Reviews the daemon hasn't finished. Denylists TERMINAL_STATUSES rather
-    than allowlisting {queued,running}, so ANY unrecognized non-terminal status
-    (an enqueue/`pending`/`starting` state, or a future one) counts as in-flight
-    and gets waited on — keeping the gate fail-CLOSED. An allowlist would treat
-    an unknown non-terminal status as terminal and, with no `F` verdict yet, let
-    an unreviewed push slip through (the exact silent-forget this gate prevents).
-    A row with no/null status is also treated as in-flight (fail-closed). Drifted
-    non-dict rows are ignored (best-effort, like `_is_open_fail`).
-
-    A `closed` row is NOT in flight even mid-run: a `roborev close`'d review can
-    never become an outstanding finding (`_is_open_fail` requires `not closed`),
-    so waiting on it would only stall the push pointlessly."""
-    return [j for j in jobs
-            if isinstance(j, dict) and not j.get("closed", False)
-            and j.get("status") not in TERMINAL_STATUSES]
 
 
 def _wait_for(roborev: str, repo_root: str, ids: list[int]) -> bool:

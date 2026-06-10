@@ -15,7 +15,6 @@ HOOK="$(cd "$(dirname "$0")" && pwd)/roborev-pre-push-gate.py"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp"
-mkdir -p "$HOME/.local/bin"
 FIXTURES="$tmp/fixtures"; mkdir -p "$FIXTURES"
 # Prepend the stub bin dir so the gate's roborev resolution (seed path =
 # ~/.local/bin/roborev under the mocked HOME) picks up the stub, not the real
@@ -23,78 +22,11 @@ FIXTURES="$tmp/fixtures"; mkdir -p "$FIXTURES"
 export PATH="$HOME/.local/bin:$PATH"
 command -v jq >/dev/null || { echo "jq required for this test suite" >&2; exit 1; }
 
-# Fake roborev. `list --json --repo R --branch B` prints repo R's fixture array
-# (whole array — the gate filters verdict/status itself). `wait --quiet --job N…`
-# flips each job N to status="done" across all fixtures (its eventual verdict is
-# pre-set in the fixture), UNLESS a sentinel says otherwise:
-#   nofinish.<id> -> return without flipping (drive the still-in-flight-after-wait deny)
-cat > "$HOME/.local/bin/roborev" <<BIN
-#!/usr/bin/env bash
-FIXTURES="$FIXTURES"
-BIN
-cat >> "$HOME/.local/bin/roborev" <<'BIN'
-repo_hash() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
-fixture_for() { printf '%s/%s.json' "$FIXTURES" "$(repo_hash "$1")"; }
-sub="$1"; shift || true
-if [[ "$sub" == "list" ]]; then
-  repo=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in --repo) repo="$2"; shift 2;; --branch) repo_branch="$2"; shift 2;; --json) shift;; *) shift;; esac
-  done
-  # listfail.<repohash> sentinel → exit nonzero, simulating a wedged daemon /
-  # timed-out list (the gate must fail CLOSED on this, not read it as empty).
-  [[ -f "$FIXTURES/listfail.$(repo_hash "$repo")" ]] && exit 3
-  f="$(fixture_for "$repo")"
-  if [[ -f "$f" ]]; then cat "$f"; else echo '[]'; fi
-  exit 0
-fi
-if [[ "$sub" == "wait" ]]; then
-  ids=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --quiet) shift;;
-      --job) shift; while [[ $# -gt 0 && "$1" != --* ]]; do ids+=("$1"); shift; done;;
-      *) shift;;
-    esac
-  done
-  for id in "${ids[@]}"; do
-    [[ -f "$FIXTURES/nofinish.$id" ]] && continue
-    for f in "$FIXTURES"/*.json; do
-      [[ -f "$f" ]] || continue
-      # Completion = status→done AND verdict→its eventual value (.final, the way
-      # a real review only gets a verdict once it finishes; in-flight rows carry
-      # verdict:null until then).
-      t="$f.t"; jq --argjson id "$id" \
-        'map(if .id==$id then .status="done" | (if .final then .verdict=.final else . end) else . end)' \
-        "$f" > "$t" && mv "$t" "$f"
-    done
-  done
-  exit 0
-fi
-exit 0
-BIN
-chmod +x "$HOME/.local/bin/roborev"
-
-write_fixture() {  # write_fixture <repo_root> <json_array>
-  printf '%s' "$2" > "$FIXTURES/$(printf '%s' "$1" | sha256sum | cut -d' ' -f1).json"
-}
-
-# Stand up a throwaway repo on branch feature/x, write its fixture, fire a
-# `git push` payload through the gate, echo stdout. Extra args set sentinels.
-new_repo() {  # new_repo <fixture_json> -> echoes repo root
-  local d root; d="$(mktemp -d "$tmp/repo.XXXXXX")"
-  git init -q -b feature/x "$d"
-  root=$(git -C "$d" rev-parse --show-toplevel)
-  write_fixture "$root" "$1"
-  printf '%s' "$root"
-}
-run_push() {  # run_push <repo_root> [push_cmd]
-  local root="$1" cmd="${2:-git push}"
-  local payload; payload=$(jq -n --arg cmd "$cmd" --arg cwd "$root" \
-    '{tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}')
-  printf '%s' "$payload" | python3 "$HOOK"
-}
-is_deny() { printf '%s' "$1" | jq -e '.hookSpecificOutput.permissionDecision=="deny"' >/dev/null 2>&1; }
+# Shared roborev fake-CLI + fixture harness (testlib.sh). The push gate calls
+# `wait` (to drain in-flight reviews), so install the harness WITH the wait
+# handler. run_push binds run_hook to this suite's HOOK, defaulting to `git push`.
+setup_fake_roborev with_wait
+run_push() { run_hook "$HOOK" "$1" "${2:-git push}"; }
 
 # --- allow paths: nothing to gate -------------------------------------------
 out=$(printf '%s' '{"tool_name":"Edit","tool_input":{}}' | python3 "$HOOK"); rc=$?
