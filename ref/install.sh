@@ -157,7 +157,7 @@ else
   fail "global core.hooksPath is already set to '$current' (not ours) — refusing to clobber. Either move roborev's hooks into '$current', or unset core.hooksPath and re-run."
 fi
 
-# --- 5. install roborev's own git hooks --------------------------------------
+# --- 5. install git hooks + seed post-commit wrapper --------------------------
 # With core.hooksPath already set (§4), `roborev install-hook` writes BOTH
 # post-commit (enqueue a review every commit — point 1 of the seed's purpose)
 # and post-rewrite (remap on rebase/amend) into $HOOKS_DIR; verified to honor
@@ -187,7 +187,7 @@ install -m 0755 "$SEED_REPO/ref/post-commit" "$HOOKS_DIR/post-commit"
 log "applied pytest-fixture guard to post-commit hook -> $HOOKS_DIR/post-commit"
 
 # --- 6. Claude Code hooks: context bridge + pre-push gate + pre-checkout gate --
-# roborev's own post-commit hook (§5) reviews every commit but its findings have
+# The post-commit hook (§5) reviews every commit but its findings have
 # no native path into an agent's context. These three Claude Code PreToolUse[Bash]
 # hooks bring those findings to the AGENT, at the surfaces where it can act:
 #   - the bridge WARNS before `git commit` (injects open fail-verdict findings

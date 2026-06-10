@@ -3,7 +3,7 @@
 # Read-only on installed state, EXCEPT one ephemeral throwaway git repo it
 # creates + a single commit in it: a deliberately-broken hello-world that a
 # claude-code reviewer must flag, proving the review loop end-to-end via the
-# public `roborev list` seam (the post-commit hook is roborev's own, silent
+# public `roborev list` seam (the seed-wrapped post-commit hook is a silent
 # one). Cleaned up before exit. Fail-loud: any miss → nonzero.
 set -uo pipefail
 
@@ -180,7 +180,7 @@ git add app.py
 git commit -q -m "seed-verify broken hello world"
 sha1=$(git rev-parse --short HEAD)
 
-# v-loop[enqueued]: roborev's post-commit hook enqueued a review for this repo.
+# v-loop[enqueued]: the seed-wrapped post-commit hook enqueued a review for this repo.
 jobs_json="$("$ROBOREV" list --repo "$tmp" --json 2>/dev/null || echo '[]')"
 job_id=$(printf '%s' "$jobs_json" | jq '.[0].id // empty' 2>/dev/null)
 job_agent=$(printf '%s' "$jobs_json" | jq -r '.[0].agent // "?"' 2>/dev/null)
