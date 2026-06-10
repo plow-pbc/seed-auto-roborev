@@ -2,7 +2,8 @@
 # Deterministic implementation of SEED.md ## Dependencies for seed-auto-roborev (v3).
 # Idempotent + fail-loud. Wires always-on roborev on this machine. roborev owns
 # its own git hooks (`post-commit` enqueues a review every commit, `post-rewrite`
-# remaps on rebase/amend) via `roborev install-hook --force`. This SEED sets up
+# remaps on rebase/amend) via `roborev install-hook --force` — the seed then wraps
+# post-commit to skip pytest fixture repos (§5). This SEED sets up
 # the bits roborev doesn't itself: the review agent (claude-code), the daemon as
 # a managed user-level service, the global core.hooksPath value, and the three
 # Claude Code PreToolUse[Bash] hooks (context bridge + pre-push gate + pre-checkout
@@ -39,6 +40,9 @@ fi
 # release, then update $ROBOREV_TAG / the sha256 below (see README "Adding a
 # platform"). Get a checksum with: shasum -a 256 <file>  (or sha256sum).
 ROBOREV_TAG="v0.1"
+# Install-time resolution prefers PATH then the pinned path. NOTE: the post-commit
+# wrapper (ref/post-commit) deliberately resolves pinned-FIRST, mirroring roborev's
+# own generated stub — don't "align" the two; the hook's order is the stub contract.
 ROBOREV="$(command -v roborev || true)"
 [ -z "$ROBOREV" ] && [ -x "$HOME/.local/bin/roborev" ] && ROBOREV="$HOME/.local/bin/roborev"
 if [ -z "$ROBOREV" ]; then
@@ -157,10 +161,14 @@ fi
 # With core.hooksPath already set (§4), `roborev install-hook` writes BOTH
 # post-commit (enqueue a review every commit — point 1 of the seed's purpose)
 # and post-rewrite (remap on rebase/amend) into $HOOKS_DIR; verified to honor
-# core.hooksPath rather than writing to .git/hooks/. roborev owns both hooks —
-# the seed adds no wrapper. The agent-facing "this commit isn't being reviewed"
-# signal lives in the Claude context bridge (§6, fires into the agent's context
-# on a missing binary); `verify.sh` is the everyone-covered on-demand check.
+# core.hooksPath rather than writing to .git/hooks/. roborev owns post-rewrite;
+# the seed then wraps post-commit (below) with a pytest-fixture guard so a global
+# core.hooksPath doesn't enqueue throwaway reviews from test-suite temp repos.
+# (post-rewrite stays unguarded: its job is to remap existing reviews on rebase/
+# amend, a no-op in a pytest repo where post-commit enqueued nothing.)
+# The agent-facing "this commit isn't being reviewed" signal lives in the Claude
+# context bridge (§6, fires into the agent's context on a missing binary);
+# `verify.sh` is the everyone-covered on-demand check.
 # Remove orphaned wrappers from a prior seed version: the old installer wrote a
 # SEED-owned `pre-commit` + `roborev-hooklib.sh` the current seed no longer
 # manages. `install-hook --force` overwrites post-commit/post-rewrite but would
@@ -169,6 +177,14 @@ fi
 rm -f "$HOOKS_DIR/pre-commit" "$HOOKS_DIR/roborev-hooklib.sh"
 ( cd "$SEED_REPO" && "$ROBOREV" install-hook --force >/dev/null )
 log "installed roborev git hooks (post-commit + post-rewrite) -> $HOOKS_DIR"
+
+# `install-hook` (above) wrote an unguarded post-commit stub. Overwrite it with
+# the seed's wrapper (ref/post-commit) so commits inside pytest fixture repos
+# (paths under <tmp>/pytest-of-<user>/, created + committed by test suites the
+# global core.hooksPath also covers) don't enqueue throwaway reviews. Re-applied
+# after every `install-hook --force`, so re-installs converge on the guarded hook.
+install -m 0755 "$SEED_REPO/ref/post-commit" "$HOOKS_DIR/post-commit"
+log "applied pytest-fixture guard to post-commit hook -> $HOOKS_DIR/post-commit"
 
 # --- 6. Claude Code hooks: context bridge + pre-push gate + pre-checkout gate --
 # roborev's own post-commit hook (§5) reviews every commit but its findings have
