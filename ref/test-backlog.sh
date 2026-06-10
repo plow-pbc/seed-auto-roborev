@@ -129,6 +129,28 @@ assert_contains "$ctx" "open FAIL" "gate surfaces the machine-wide backlog as ad
 assert_contains "$ctx" "INFORMATIONAL" "surfaced backlog is explicitly marked informational/non-blocking"
 assert_contains "$ctx" "alpha" "surfaced backlog names the other-branch repos to sweep"
 
+# Branch-granular current-branch marker (format_backlog_summary, unit-level): two
+# open FAILs on DIFFERENT branches of the SAME repo (same root_path). With the
+# pushed branch = feat/clean, the marker must tag ONLY feat/clean — a repo-only
+# match would mislabel the sibling feat/other's abandoned FAIL as already-covered,
+# hiding exactly the cross-branch FAIL this surface exists to flag. (Driven on the
+# pure function so it isn't masked by the ephemeral-path filter in a /tmp test.)
+mark_out=$(REF="$REF" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REF"])
+from _roborev_hooklib import format_backlog_summary
+backlog = [
+    {"repo": "clean", "root_path": "/home/u/clean", "branch": "feat/clean", "id": 500},
+    {"repo": "clean", "root_path": "/home/u/clean", "branch": "feat/other", "id": 501},
+]
+print(format_backlog_summary(backlog, current_repo_root="/home/u/clean", current_branch="feat/clean"))
+PY
+)
+clean_line=$(printf '%s\n' "$mark_out" | grep "feat/clean")
+other_line=$(printf '%s\n' "$mark_out" | grep "feat/other")
+assert_contains "$clean_line" "current branch" "pushed branch (feat/clean) IS marked as current"
+assert_not_contains "$other_line" "current branch" "sibling branch (feat/other) of the same repo is NOT mis-marked as current"
+
 # When the backlog is empty, the allow path stays a SILENT clean allow (no JSON).
 sqlite3 "$DB" "UPDATE reviews SET closed=1;"
 out=$(printf '%s' "$payload" | python3 "$GATE"); rc=$?

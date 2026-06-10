@@ -285,12 +285,18 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
     return [dict(r) for r in rows if not _is_ephemeral_repo(r["root_path"])]
 
 
-def format_backlog_summary(backlog: list[dict], current_repo_root: str = "") -> str:
+def format_backlog_summary(
+    backlog: list[dict], current_repo_root: str = "", current_branch: str = ""
+) -> str:
     """Render `open_fail_backlog()` output as a compact `repo  branch  count/ids`
     block for the pre-push gate's non-blocking surface, plus the active-vs-stale
     cleanup nudge. Empty backlog → "" (caller emits nothing). Groups by
-    (repo, branch); the branch the push is on (matched by `current_repo_root`) is
-    marked so the agent doesn't re-sweep what the hard gate already covered."""
+    (repo, branch); the EXACT (repo_root, branch) being pushed is marked so the
+    agent doesn't re-sweep what the hard current-branch gate already covered —
+    branch-granular, because all branches of a repo share one `root_path`, so a
+    repo-only match would mis-mark every other branch of the pushed repo as
+    already-covered (the very abandoned-branch FAILs this surface exists to
+    flag). The mark only appears when BOTH a repo root and a branch are given."""
     if not backlog:
         return ""
     groups: dict[tuple[str, str], list[int]] = {}
@@ -307,7 +313,8 @@ def format_backlog_summary(backlog: list[dict], current_repo_root: str = "") -> 
         "",
     ]
     for (repo, branch), ids in groups.items():
-        mark = "  <- current branch" if repo == current_repo_name else ""
+        is_current = bool(current_branch) and repo == current_repo_name and branch == current_branch
+        mark = "  <- current branch (already covered by the hard gate)" if is_current else ""
         id_list = ", ".join(f"#{i}" for i in ids)
         lines.append(f"  {repo}  {branch}  ({len(ids)}) {id_list}{mark}")
     lines += [

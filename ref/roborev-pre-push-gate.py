@@ -83,10 +83,11 @@ def _allow() -> int:
     return 0  # exit 0, no stdout → normal permission flow proceeds
 
 
-def _allow_with_backlog(repo_root: str) -> int:
+def _allow_with_backlog(repo_root: str, branch: str) -> int:
     """The happy-path allow: this branch is clear (current-branch deny already
     ruled out), so surface the MACHINE-WIDE open-FAIL backlog as non-blocking
-    `additionalContext` and nudge the agent to sweep the stale ones.
+    `additionalContext` and nudge the agent to sweep the stale ones. The pushed
+    (repo_root, branch) is passed through so it's marked as already-covered.
 
     NON-BLOCKING by construction: it emits NO `permissionDecision`, so the push
     proceeds regardless of what other branches hold — the hard deny stays
@@ -96,7 +97,9 @@ def _allow_with_backlog(repo_root: str) -> int:
     backlog = open_fail_backlog()
     if not backlog:
         return _allow()
-    summary = format_backlog_summary(backlog, current_repo_root=repo_root)
+    summary = format_backlog_summary(
+        backlog, current_repo_root=repo_root, current_branch=branch
+    )
     if not summary:
         return _allow()
     print(json.dumps({"hookSpecificOutput": {
@@ -257,7 +260,7 @@ def main() -> int:
     # This branch is clear. Surface the machine-wide backlog (non-blocking) so
     # the agent can sweep stale FAILs on OTHER branches it's moved off of — the
     # visibility half the current-branch deny structurally can't cover.
-    return _allow_with_backlog(repo_root)
+    return _allow_with_backlog(repo_root, branch)
 
 
 if __name__ == "__main__":
