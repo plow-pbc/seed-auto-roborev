@@ -38,6 +38,7 @@ INSERT INTO repos VALUES (1,'/home/u/Hacking/alpha','alpha');
 INSERT INTO repos VALUES (2,'/home/u/Hacking/beta','beta');
 INSERT INTO repos VALUES (3,'/tmp/pytest-of-u/pytest-1/repo','fixturerepo');   -- ephemeral: must be filtered
 INSERT INTO repos VALUES (4,'/private/tmp/smoke','smokerepo');                 -- ephemeral (macOS): filtered
+INSERT INTO repos VALUES (5,'/private/var/folders/xy/zz/T/repo','mktmprepo');  -- ephemeral (macOS mktemp -d resolved): filtered
 
 -- alpha: two open FAILs on feat/x, one PASS (not a finding), one closed FAIL (not open)
 INSERT INTO review_jobs VALUES (10,1,'feat/x');
@@ -58,6 +59,8 @@ INSERT INTO review_jobs VALUES (30,3,'main');
 INSERT INTO reviews VALUES (300,30,0,0);
 INSERT INTO review_jobs VALUES (40,4,'main');
 INSERT INTO reviews VALUES (400,40,0,0);
+INSERT INTO review_jobs VALUES (50,5,'main');
+INSERT INTO reviews VALUES (500,50,0,0);
 SQL
 
 # --- the JSON helper: exactly the 3 real open FAILs, fixtures filtered --------
@@ -69,6 +72,7 @@ ids=$(printf '%s' "$json" | jq -c '[.[].id] | sort')
 assert_eq "[100,101,200]" "$ids" "backlog returns the open-FAIL review ids across repos/branches"
 assert_not_contains "$json" "fixturerepo" "ephemeral /tmp/pytest repo is filtered from the backlog"
 assert_not_contains "$json" "smokerepo"   "ephemeral /private/tmp repo is filtered from the backlog"
+assert_not_contains "$json" "mktmprepo"   "ephemeral /private/var/folders repo (macOS mktemp) is filtered from the backlog"
 
 # --- the human-readable helper -----------------------------------------------
 human=$(python3 "$LIST_ALL"); rc=$?
