@@ -80,6 +80,32 @@ else
 fi
 rm -rf "$ga_cwd" "$ga_home" "$ga_err"
 
+# --- v-checkout — Claude Code pre-checkout gate (seed-owned PreToolUse[Bash]) -
+CHECKOUT="${XDG_CONFIG_HOME:-$HOME/.config}/roborev/claude-hooks/roborev-pre-checkout-gate.py"
+[ -x "$CHECKOUT" ] && ok "v-checkout[file]: installed at $CHECKOUT" || bad "v-checkout[file]: missing/not-exec at $CHECKOUT"
+if [ -f "$HOME/.claude/settings.json" ] && \
+   jq -e --arg c "$CHECKOUT" 'any(.hooks.PreToolUse[]?;
+     .matcher == "Bash" and
+     any(.hooks[]?; .type == "command" and .command == $c))' \
+   "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  ok "v-checkout[settings]: PreToolUse[Bash] checkout-gate entry present"
+else
+  bad "v-checkout[settings]: PreToolUse[Bash] checkout-gate entry NOT found in ~/.claude/settings.json"
+fi
+# v-checkout[allow]: a FILE checkout (`git checkout -- <path>`) is not a branch
+# switch and must be allowed with a clean exit (no crash, no deny) — the gate
+# only ever denies a branch SWITCH. Stripped PATH/HOME surfaces an import crash.
+co_cwd="$(mktemp -d)"; co_home="$(mktemp -d)"; co_err="$(mktemp)"
+( cd "$co_cwd" && git init -q )
+co_out=$(printf '{"tool_name":"Bash","tool_input":{"command":"git checkout -- f.py"},"cwd":"%s"}' "$co_cwd" \
+  | HOME="$co_home" PATH="/usr/bin:/bin" "$CHECKOUT" 2>"$co_err"); co_rc=$?
+if [ "$co_rc" -eq 0 ] && [ -z "$co_out" ] && [ ! -s "$co_err" ]; then
+  ok "v-checkout[allow]: file checkout (git checkout -- f) is allowed (clean exit, no deny)"
+else
+  bad "v-checkout[allow]: checkout gate did not cleanly allow a file checkout (rc=$co_rc, stdout='$co_out', stderr='$(cat "$co_err")')"
+fi
+rm -rf "$co_cwd" "$co_home" "$co_err"
+
 # --- v-skill — Claude Code roborev usage skill ------------------------------
 SKILL="$HOME/.claude/skills/roborev/SKILL.md"
 # Assert the FIRST frontmatter block (line 1 `---`, line 2 `name: roborev`) — not

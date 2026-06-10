@@ -7,8 +7,9 @@
 # actually run the SEED install.
 
 # Run the unit suites (foreground, fail-loud): Claude bridge, pre-push gate,
-# installer fetch/checksum gate.
+# pre-checkout gate, installer fetch/checksum gate.
 test:
     ./ref/test-bridge.sh
     ./ref/test-gate.sh
+    ./ref/test-checkout-gate.sh
     ./ref/test-install.sh
