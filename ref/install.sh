@@ -228,8 +228,8 @@ log "merged PreToolUse[Bash] roborev bridge + pre-push gate + pre-checkout gate 
 # --- 7. Claude Code skill: roborev usage + the review-loop contract ----------
 # The §6 hooks bring findings TO the agent; this skill teaches the agent how to
 # USE roborev and the workflow contract it serves (let reviews finish before
-# push, fix or `roborev close` fail-verdict findings, never push over an unread
-# verdict=F). A skill is Claude Code's native home for "how to use tool X + its
+# push/switch, fix or `roborev close` fail-verdict findings, never push over or
+# switch away from an unread verdict=F). A skill is Claude Code's native home for "how to use tool X + its
 # loop" and auto-activates on commit/push/checkout/switch triggers. Installed to ~/.claude/skills
 # as a real dir: claude-config's `just install` only prunes ITS OWN repo-owned
 # skill symlinks and preserves user-owned entries, so this coexists collision-free.

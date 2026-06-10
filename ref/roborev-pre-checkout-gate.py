@@ -49,6 +49,19 @@ not let unreviewed code leave), but a blocked checkout strands no code and a
 wedged daemon blocking every branch switch is worse than letting one switch
 through (the findings are still on the branch, surfaced again on the next
 commit/push). Claude-Code-only, same scope as the push gate.
+
+Scope limit (shared with the push gate, by design): a chained
+`git commit && git switch other` in ONE Bash call is NOT gated for that call.
+PreToolUse fires once, before the string runs, so the new commit's review isn't
+enqueued yet — there's nothing for `_list_jobs` to see. The strand is
+self-healing: the post-commit review lands on the (now-left) branch and is
+caught on the NEXT switch attempt off it, the commit bridge surfaces it on the
+next commit, and the push gate blocks the eventual push. Detecting a trailing
+switch after a commit segment isn't worth the segment-ordering parser
+complexity for a bypass that's trivially available anyway (just run the two
+commands separately) — the push gate declined the identical
+`git commit && git push` case for the same reason; keeping the two gates'
+command-parsing stance identical is the point of the shared `_roborev_hooklib`.
 """
 from __future__ import annotations
 
