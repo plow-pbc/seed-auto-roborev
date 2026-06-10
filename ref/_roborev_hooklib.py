@@ -151,11 +151,12 @@ def _is_branch_switch_args(subcommand: str, args: list[str]) -> bool:
     `args` is the token list AFTER the subcommand (options + operands, in order).
 
     A branch switch is:
-      - `git switch <name>` / `git switch -c|-C <new>`  — `switch` is *always* a
-        branch operation (it can't restore files), so any `switch` that isn't a
-        pure no-op gates;
+      - `git switch <name>` / `git switch -c|-C <new>` / `git switch --detach
+        <ref>` — `switch` is *always* a branch operation (it can't restore
+        files), so any `switch` that isn't a pure no-op gates;
       - `git checkout <branch>` / `git checkout -b|-B <new>` / `git checkout -`
-        (previous branch) — a checkout whose operand is a ref, not a pathspec.
+        (previous branch) / `git checkout --detach [<ref>]` (detach HEAD) — a
+        checkout that leaves the branch rather than restoring a pathspec.
 
     NOT a branch switch (do NOT gate):
       - `git checkout -- <path>` (explicit pathspec after `--`),
@@ -188,6 +189,11 @@ def _is_branch_switch_args(subcommand: str, args: list[str]) -> bool:
     alone) carry no destination branch → not a switch → do NOT gate."""
     create_flags = {"-b", "-B", "-c", "-C"}
     has_create = any(a in create_flags for a in args)
+    # `--detach` LEAVES the current branch for a detached HEAD (`git switch
+    # --detach <ref>` / `git checkout --detach [<ref>]`). The ref form already
+    # gates via its operand, but `git checkout --detach` with no ref doesn't —
+    # treat `--detach` itself as a branch-leaving signal for both subcommands.
+    has_detach = "--detach" in args
     has_dashdash = "--" in args
     has_pathspec_from_file = any(
         a == "--pathspec-from-file" or a.startswith("--pathspec-from-file=")
@@ -206,16 +212,17 @@ def _is_branch_switch_args(subcommand: str, args: list[str]) -> bool:
 
     if subcommand == "switch":
         # `switch` is exclusively a branch operation. Gate unless it's the bare
-        # no-op (`git switch` with no branch and no -c/-C target). `git switch -`
-        # (previous branch) reads `-` as an option token, so it's filtered out of
-        # `operands` — handle it explicitly, mirroring the checkout path below.
-        return has_create or "-" in args or bool(operands)
+        # no-op (`git switch` with no branch and no -c/-C/--detach target).
+        # `git switch -` (previous branch) reads `-` as an option token, so it's
+        # filtered out of `operands` — handle it (and `--detach`) explicitly,
+        # mirroring the checkout path below.
+        return has_create or has_detach or "-" in args or bool(operands)
 
     # subcommand == "checkout"
     if has_dashdash or has_pathspec_from_file:
         return False                       # explicit file-restore form
-    if has_create:
-        return True                        # -b/-B create-and-switch
+    if has_create or has_detach:
+        return True                        # -b/-B create-and-switch, or --detach
     if "-" in args:
         return True                        # `git checkout -` → previous branch
     if len(operands) == 1 and operands[0] != ".":
