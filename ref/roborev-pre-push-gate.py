@@ -58,6 +58,8 @@ from _roborev_hooklib import (
     _git_toplevel,
     _list_jobs,
     _is_open_fail,
+    open_fail_backlog,
+    format_backlog_summary,
     TERMINAL_STATUSES,
 )
 
@@ -79,6 +81,29 @@ _LIST_FAIL_REASON = (
 
 def _allow() -> int:
     return 0  # exit 0, no stdout → normal permission flow proceeds
+
+
+def _allow_with_backlog(repo_root: str) -> int:
+    """The happy-path allow: this branch is clear (current-branch deny already
+    ruled out), so surface the MACHINE-WIDE open-FAIL backlog as non-blocking
+    `additionalContext` and nudge the agent to sweep the stale ones.
+
+    NON-BLOCKING by construction: it emits NO `permissionDecision`, so the push
+    proceeds regardless of what other branches hold — the hard deny stays
+    strictly current-branch-only (other-branch FAILs must never wedge a push).
+    Any failure to read the backlog (None) falls back to a silent clean allow —
+    the informational surface is best-effort and never costs a push."""
+    backlog = open_fail_backlog()
+    if not backlog:
+        return _allow()
+    summary = format_backlog_summary(backlog, current_repo_root=repo_root)
+    if not summary:
+        return _allow()
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": summary,
+    }}))
+    return 0
 
 
 def _deny(reason: str) -> int:
@@ -229,7 +254,10 @@ def main() -> int:
                 "re-run the push once they finish (`roborev status`)."
             )
 
-    return _allow()
+    # This branch is clear. Surface the machine-wide backlog (non-blocking) so
+    # the agent can sweep stale FAILs on OTHER branches it's moved off of — the
+    # visibility half the current-branch deny structurally can't cover.
+    return _allow_with_backlog(repo_root)
 
 
 if __name__ == "__main__":
