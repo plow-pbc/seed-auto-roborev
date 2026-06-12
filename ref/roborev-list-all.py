@@ -5,8 +5,9 @@ that the real `roborev list` CLI can't produce (it's scoped to one repo+branch).
 roborev is a pinned upstream release binary with no source here, so there's no
 real `--all` subcommand to add. This standalone helper fills that gap by reading
 the daemon's store (`~/.roborev/reviews.db`) directly, read-only, and printing
-every UNCLOSED FAIL review across ALL repos and branches — ephemeral fixture
-repos (under /tmp etc.) filtered out as noise.
+every job with an UNCLOSED FAIL review across ALL repos and branches (one
+deduped row per open-FAIL job) — ephemeral fixture repos (under /tmp etc.)
+filtered out as noise.
 
 It reuses `open_fail_backlog()` / `format_backlog_summary()` from the shared
 `_roborev_hooklib`, so its definition of "open finding" (`verdict_bool = 0 AND
@@ -16,6 +17,9 @@ gate on the same predicate over the CLI's `verdict == "F" && !closed` rows.
 Usage:
   roborev-list-all.py            # human-readable repo  branch  count/ids backlog
   roborev-list-all.py --json     # the raw [{repo, root_path, branch, id}] rows
+
+Every `id` it prints (both surfaces) is a JOB id — pass it straight to
+`roborev show/close/comment <id>`.
 
 Exit status: 0 on a clean read (including an empty backlog), 1 if the DB can't
 be read (missing/locked/schema-drift) — distinct so a wrapper can tell "all
@@ -43,7 +47,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps(backlog))
         return 0
     if not backlog:
-        print("roborev backlog: 0 open FAIL reviews machine-wide. All clear.")
+        print("roborev backlog: 0 open FAIL jobs machine-wide. All clear.")
         return 0
     print(format_backlog_summary(backlog))
     return 0

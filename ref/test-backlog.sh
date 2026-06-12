@@ -46,6 +46,7 @@ INSERT INTO review_jobs VALUES (11,1,'feat/x');
 INSERT INTO review_jobs VALUES (12,1,'feat/x');
 INSERT INTO review_jobs VALUES (13,1,'feat/x');
 INSERT INTO reviews VALUES (100,10,0,0);   -- open FAIL
+INSERT INTO reviews VALUES (104,10,0,0);   -- second open FAIL on the SAME job -> must dedup to one #10
 INSERT INTO reviews VALUES (101,11,0,0);   -- open FAIL
 INSERT INTO reviews VALUES (102,12,1,0);   -- PASS  (verdict_bool=1) -> excluded
 INSERT INTO reviews VALUES (103,13,0,1);   -- closed FAIL            -> excluded
@@ -67,9 +68,13 @@ SQL
 json=$(python3 "$LIST_ALL" --json); rc=$?
 assert_rc 0 "$rc" "list-all --json exits 0 on a readable DB"
 count=$(printf '%s' "$json" | jq 'length')
-assert_eq "3" "$count" "backlog has exactly the 3 real open FAILs (PASS + closed + 2 fixture-repo FAILs excluded)"
+assert_eq "3" "$count" "backlog has exactly the 3 real open-FAIL jobs (PASS + closed + 2 fixture-repo FAILs excluded; job 10's two open reviews dedup to one row)"
 ids=$(printf '%s' "$json" | jq -c '[.[].id] | sort')
-assert_eq "[100,101,200]" "$ids" "backlog returns the open-FAIL review ids across repos/branches"
+# The fixture's id spaces are deliberately disjoint (jobs 10s/20s, reviews 100s/200s)
+# so this pins the namespace: emitted ids are JOB ids — what `roborev show/close/
+# comment` resolve — not reviews.id, which the CLI answers "no review found" for.
+# Job 10 carries two open FAIL reviews (100, 104) but lists once: one close clears both.
+assert_eq "[10,11,20]" "$ids" "backlog returns deduped JOB ids (the roborev show/close namespace), not review-row ids"
 assert_not_contains "$json" "fixturerepo" "ephemeral /tmp/pytest repo is filtered from the backlog"
 assert_not_contains "$json" "smokerepo"   "ephemeral /private/tmp repo is filtered from the backlog"
 assert_not_contains "$json" "mktmprepo"   "ephemeral /private/var/folders repo (macOS mktemp) is filtered from the backlog"

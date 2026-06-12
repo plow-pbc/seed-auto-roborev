@@ -391,17 +391,24 @@ def _is_ephemeral_repo(root_path: object) -> bool:
 
 
 def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
-    """The MACHINE-WIDE open fail-verdict backlog: every unclosed FAIL review
-    across ALL repos and branches in the daemon's store, ephemeral fixture repos
-    filtered out. Read-only — a single SELECT, opened read-only so a concurrent
-    daemon write is never at risk.
+    """The MACHINE-WIDE open fail-verdict backlog: every job with an unclosed
+    FAIL review across ALL repos and branches in the daemon's store, ephemeral
+    fixture repos filtered out. Read-only — a single SELECT, opened read-only so
+    a concurrent daemon write is never at risk.
 
-    Returns a list of `{repo, root_path, branch, id}` dicts (one per open FAIL),
-    or `None` if the DB can't be read (missing file, locked, schema drift) — the
-    same None-vs-[] distinction `_list_jobs` draws, so callers can tell "nothing
-    open" from "couldn't look." This is INFORMATIONAL ONLY (the pre-push gate
-    surfaces it non-blocking); a None just means "no backlog summary this time,"
-    never a denied push.
+    Returns a list of `{repo, root_path, branch, id}` dicts (one per open-FAIL job),
+    where `id` is the JOB id (`review_jobs.id`) — the namespace every CLI verb
+    (`roborev show/close/comment <id>`) resolves. Surfacing `reviews.id` here
+    instead handed agents ids the CLI answers "no review found" for, killing
+    the backlog sweep. SELECT DISTINCT because the emitted id is no longer the
+    row's primary key: should a job ever carry two open FAIL reviews, one
+    `close` clears both, so one listed id is the honest surface.
+
+    Returns `None` if the DB can't be read (missing file, locked, schema
+    drift) — the same None-vs-[] distinction `_list_jobs` draws, so callers can
+    tell "nothing open" from "couldn't look." This is INFORMATIONAL ONLY (the
+    pre-push gate surfaces it non-blocking); a None just means "no backlog
+    summary this time," never a denied push.
 
     `reviews.verdict_bool = 0` is the DB-level spelling of `_is_open_fail`'s
     `verdict == "F"` (FAIL): the CLI maps the same column to the "F"/"P" letter.
@@ -418,16 +425,17 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT repos.name        AS repo,
+                SELECT DISTINCT
+                       repos.name        AS repo,
                        repos.root_path   AS root_path,
                        review_jobs.branch AS branch,
-                       reviews.id        AS id
+                       reviews.job_id    AS id
                 FROM reviews
                 JOIN review_jobs ON reviews.job_id = review_jobs.id
                 JOIN repos       ON review_jobs.repo_id = repos.id
                 WHERE reviews.verdict_bool = 0
                   AND reviews.closed = 0
-                ORDER BY repos.name, review_jobs.branch, reviews.id
+                ORDER BY repos.name, review_jobs.branch, reviews.job_id
                 """
             ).fetchall()
         finally:
@@ -453,7 +461,7 @@ def format_backlog_summary(backlog: list[dict]) -> str:
         groups.setdefault(key, []).append(row["id"])
         display_name.setdefault(key, row["repo"])
     lines = [
-        f"roborev backlog: {len(backlog)} open FAIL review(s) across "
+        f"roborev backlog: {len(backlog)} open FAIL job(s) across "
         f"{len(groups)} branch(es) machine-wide (this is INFORMATIONAL — your "
         "push is NOT blocked by other branches):",
         "",
