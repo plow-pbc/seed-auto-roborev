@@ -5,8 +5,9 @@ that the real `roborev list` CLI can't produce (it's scoped to one repo+branch).
 roborev is a pinned upstream release binary with no source here, so there's no
 real `--all` subcommand to add. This standalone helper fills that gap by reading
 the daemon's store (`~/.roborev/reviews.db`) directly, read-only, and printing
-every UNCLOSED FAIL review across ALL repos and branches — ephemeral fixture
-repos (under /tmp etc.) filtered out as noise.
+every job with an UNCLOSED FAIL review across ALL repos and branches (one
+deduped row per open-FAIL job) — ephemeral fixture repos (under /tmp etc.)
+filtered out as noise.
 
 It reuses `open_fail_backlog()` / `format_backlog_summary()` from the shared
 `_roborev_hooklib`, so its definition of "open finding" (`verdict_bool = 0 AND

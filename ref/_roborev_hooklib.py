@@ -391,10 +391,10 @@ def _is_ephemeral_repo(root_path: object) -> bool:
 
 
 def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
-    """The MACHINE-WIDE open fail-verdict backlog: every unclosed FAIL review
-    across ALL repos and branches in the daemon's store, ephemeral fixture repos
-    filtered out. Read-only — a single SELECT, opened read-only so a concurrent
-    daemon write is never at risk.
+    """The MACHINE-WIDE open fail-verdict backlog: every job with an unclosed
+    FAIL review across ALL repos and branches in the daemon's store, ephemeral
+    fixture repos filtered out. Read-only — a single SELECT, opened read-only so
+    a concurrent daemon write is never at risk.
 
     Returns a list of `{repo, root_path, branch, id}` dicts (one per open-FAIL job),
     where `id` is the JOB id (`review_jobs.id`) — the namespace every CLI verb
