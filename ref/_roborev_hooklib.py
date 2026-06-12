@@ -397,7 +397,11 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
     daemon write is never at risk.
 
     Returns a list of `{repo, root_path, branch, id}` dicts (one per open FAIL),
-    or `None` if the DB can't be read (missing file, locked, schema drift) — the
+    where `id` is the JOB id (`review_jobs.id`) — the namespace every CLI verb
+    (`roborev show/close/comment <id>`) resolves. Surfacing `reviews.id` here
+    instead handed agents ids the CLI answers "no review found" for, killing
+    the backlog sweep. Or `None` if the DB can't be read (missing file, locked,
+    schema drift) — the
     same None-vs-[] distinction `_list_jobs` draws, so callers can tell "nothing
     open" from "couldn't look." This is INFORMATIONAL ONLY (the pre-push gate
     surfaces it non-blocking); a None just means "no backlog summary this time,"
@@ -421,13 +425,13 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
                 SELECT repos.name        AS repo,
                        repos.root_path   AS root_path,
                        review_jobs.branch AS branch,
-                       reviews.id        AS id
+                       reviews.job_id    AS id
                 FROM reviews
                 JOIN review_jobs ON reviews.job_id = review_jobs.id
                 JOIN repos       ON review_jobs.repo_id = repos.id
                 WHERE reviews.verdict_bool = 0
                   AND reviews.closed = 0
-                ORDER BY repos.name, review_jobs.branch, reviews.id
+                ORDER BY repos.name, review_jobs.branch, reviews.job_id
                 """
             ).fetchall()
         finally:

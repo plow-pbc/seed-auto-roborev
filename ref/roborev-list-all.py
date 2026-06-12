@@ -17,6 +17,9 @@ Usage:
   roborev-list-all.py            # human-readable repo  branch  count/ids backlog
   roborev-list-all.py --json     # the raw [{repo, root_path, branch, id}] rows
 
+Every `id` it prints (both surfaces) is a JOB id — pass it straight to
+`roborev show/close/comment <id>`.
+
 Exit status: 0 on a clean read (including an empty backlog), 1 if the DB can't
 be read (missing/locked/schema-drift) — distinct so a wrapper can tell "all
 clear" from "couldn't look." This is an exploration aid for the cross-branch
