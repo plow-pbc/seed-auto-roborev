@@ -46,7 +46,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps(backlog))
         return 0
     if not backlog:
-        print("roborev backlog: 0 open FAIL reviews machine-wide. All clear.")
+        print("roborev backlog: 0 open FAIL jobs machine-wide. All clear.")
         return 0
     print(format_backlog_summary(backlog))
     return 0

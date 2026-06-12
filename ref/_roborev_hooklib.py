@@ -396,7 +396,7 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
     filtered out. Read-only — a single SELECT, opened read-only so a concurrent
     daemon write is never at risk.
 
-    Returns a list of `{repo, root_path, branch, id}` dicts (one per open FAIL),
+    Returns a list of `{repo, root_path, branch, id}` dicts (one per open-FAIL job),
     where `id` is the JOB id (`review_jobs.id`) — the namespace every CLI verb
     (`roborev show/close/comment <id>`) resolves. Surfacing `reviews.id` here
     instead handed agents ids the CLI answers "no review found" for, killing
@@ -461,7 +461,7 @@ def format_backlog_summary(backlog: list[dict]) -> str:
         groups.setdefault(key, []).append(row["id"])
         display_name.setdefault(key, row["repo"])
     lines = [
-        f"roborev backlog: {len(backlog)} open FAIL review(s) across "
+        f"roborev backlog: {len(backlog)} open FAIL job(s) across "
         f"{len(groups)} branch(es) machine-wide (this is INFORMATIONAL — your "
         "push is NOT blocked by other branches):",
         "",
