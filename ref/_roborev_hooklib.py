@@ -400,12 +400,15 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
     where `id` is the JOB id (`review_jobs.id`) — the namespace every CLI verb
     (`roborev show/close/comment <id>`) resolves. Surfacing `reviews.id` here
     instead handed agents ids the CLI answers "no review found" for, killing
-    the backlog sweep. Or `None` if the DB can't be read (missing file, locked,
-    schema drift) — the
-    same None-vs-[] distinction `_list_jobs` draws, so callers can tell "nothing
-    open" from "couldn't look." This is INFORMATIONAL ONLY (the pre-push gate
-    surfaces it non-blocking); a None just means "no backlog summary this time,"
-    never a denied push.
+    the backlog sweep. SELECT DISTINCT because the emitted id is no longer the
+    row's primary key: should a job ever carry two open FAIL reviews, one
+    `close` clears both, so one listed id is the honest surface.
+
+    Returns `None` if the DB can't be read (missing file, locked, schema
+    drift) — the same None-vs-[] distinction `_list_jobs` draws, so callers can
+    tell "nothing open" from "couldn't look." This is INFORMATIONAL ONLY (the
+    pre-push gate surfaces it non-blocking); a None just means "no backlog
+    summary this time," never a denied push.
 
     `reviews.verdict_bool = 0` is the DB-level spelling of `_is_open_fail`'s
     `verdict == "F"` (FAIL): the CLI maps the same column to the "F"/"P" letter.
@@ -422,7 +425,8 @@ def open_fail_backlog(db_path: Path = ROBOREV_DB) -> list[dict] | None:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
-                SELECT repos.name        AS repo,
+                SELECT DISTINCT
+                       repos.name        AS repo,
                        repos.root_path   AS root_path,
                        review_jobs.branch AS branch,
                        reviews.job_id    AS id
